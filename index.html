@@ -1,0 +1,3582 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>First-Person Snake</title>
+<style>
+  :root {
+    --accent: #4dff88;
+    --accent-2: #ffd166;
+    --danger: #ff5470;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body {
+    height: 100%;
+    overflow: hidden;
+    background: #05060a;
+    color: #e8f0ff;
+    font-family: "SF Mono", "JetBrains Mono", ui-monospace, Menlo, Consolas, monospace;
+    cursor: crosshair;
+  }
+  #app { position: fixed; inset: 0; }
+  canvas { display: block; }
+  /* generic hide — the more specific .hidden rules below win where they exist */
+  .hidden { display: none; }
+
+  /* ---------- HUD ---------- */
+  #hud {
+    position: fixed; top: 0; left: 0; right: 0;
+    display: flex; flex-direction: column; align-items: center; gap: 9px;
+    padding: 14px 0; pointer-events: none; z-index: 5;
+    text-shadow: 0 2px 10px rgba(0,0,0,.75);
+    user-select: none;
+  }
+  /* HUD lives along the top-centre so the four corner cameras stay clear */
+  .hgroup { display: flex; gap: 28px; align-items: flex-start; }
+  .stat { display: flex; flex-direction: column; gap: 2px; align-items: center; }
+  .stat .label { font-size: 11px; letter-spacing: 2px; opacity: .55; text-transform: uppercase; }
+  .stat .value { font-size: 24px; font-weight: 700; line-height: 1; }
+  #score .value { color: var(--accent); }
+  #len .value { color: #7fd4ff; }
+  #spd .value { color: var(--accent-2); }
+  #mines .value { color: #ff9f43; }
+  #rivals { display: flex; flex-direction: row; align-items: center; gap: 16px; font-size: 12px; }
+  #rivals .rlabel { font-size: 10px; letter-spacing: 2px; text-transform: uppercase; opacity: .55; }
+  #rivals .rrow { display: flex; gap: 7px; align-items: center; }
+  #rivals .rrow.dead { opacity: .45; }
+  #rivals .dot { width: 7px; height: 7px; border-radius: 50%; }
+  #rivals .rname { text-align: left; letter-spacing: 1px; opacity: .85; }
+  #rivals .rlen { width: 24px; text-align: right; font-weight: 700; }
+
+  /* ---------- corner spectator windows ---------- */
+  .cornerFrame {
+    position: fixed; pointer-events: none; z-index: 4; display: none;
+    border: 1.5px solid rgba(127,212,255,.42);
+    border-radius: 9px;
+    box-shadow: inset 0 0 34px rgba(0,0,0,.55), 0 0 16px rgba(28,110,160,.22);
+  }
+  .cornerFrame .ctag {
+    position: absolute; top: 4px; left: 7px;
+    font-size: 9px; letter-spacing: 1.5px; color: #9fd8ff; opacity: .5;
+    text-shadow: 0 1px 4px #000;
+  }
+
+  /* crosshair */
+  #crosshair {
+    position: fixed; top: 50%; left: 50%; width: 4px; height: 4px;
+    transform: translate(-50%, -50%);
+    background: rgba(255,255,255,.85); border-radius: 50%;
+    box-shadow: 0 0 6px rgba(255,255,255,.6);
+    pointer-events: none; z-index: 6;
+  }
+
+  @keyframes rblink { 50% { opacity: .2; } }
+
+  /* ---------- replay modal ---------- */
+  #replayModal { position: fixed; inset: 0; z-index: 20; }
+  #replayModal.hidden { display: none; }
+  /* The view is a transparent hole punched in the dimmer: the box-shadow paints
+     the backdrop everywhere else, so the WebGL replay can be scissored into the
+     middle of the main canvas and still read as a modal. */
+  #rmView {
+    position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
+    width: min(82vw, 1180px); height: min(72vh, 664px);
+    border: 2px solid rgba(127,212,255,.5);
+    border-radius: 8px;
+    box-shadow: 0 0 0 100vmax rgba(2,4,8,.86), 0 0 70px rgba(0,0,0,.85);
+    overflow: hidden;
+  }
+  .rmHead {
+    position: absolute; top: 0; left: 0; right: 0; height: 40px; z-index: 2;
+    display: flex; align-items: center; gap: 12px; padding: 0 14px;
+    background: linear-gradient(180deg, rgba(4,8,14,.82), rgba(4,8,14,0));
+    pointer-events: none;
+  }
+  .rmTag {
+    display: flex; align-items: center; gap: 8px;
+    font-size: 12px; font-weight: 700; letter-spacing: 3px; color: var(--danger);
+    text-shadow: 0 0 16px rgba(255,84,112,.55);
+  }
+  .rmTag::before {
+    content: ""; width: 8px; height: 8px; border-radius: 50%;
+    background: var(--danger); box-shadow: 0 0 12px var(--danger);
+    animation: rblink 1s step-end infinite;
+  }
+  .rmSub { font-size: 11px; letter-spacing: 1.5px; opacity: .5; }
+  .rmClose {
+    position: absolute; top: 8px; right: 10px; width: 28px; height: 28px;
+    border-radius: 8px; cursor: pointer; pointer-events: auto;
+    border: 1px solid rgba(255,255,255,.2); background: rgba(10,14,22,.72);
+    color: #e8f0ff; font-family: inherit; font-size: 13px; line-height: 1;
+  }
+  .rmClose:hover { background: rgba(40,50,70,.9); }
+  .rmBar {
+    position: absolute; left: 0; right: 0; bottom: 0; height: 3px; z-index: 2;
+    background: rgba(255,255,255,.12);
+  }
+  .rmFill { width: 0%; height: 100%; background: linear-gradient(90deg, #7fd4ff, var(--danger)); }
+
+  /* ---------- Overlays ---------- */
+  .overlay {
+    position: fixed; inset: 0; z-index: 10;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    gap: 18px; text-align: center;
+    background: radial-gradient(ellipse at center, rgba(6,10,20,.72), rgba(3,5,10,.94));
+    backdrop-filter: blur(3px);
+    padding: 24px;
+  }
+  .overlay.hidden { display: none; }
+  .title {
+    font-size: clamp(40px, 8vw, 84px); font-weight: 800; letter-spacing: 4px;
+    background: linear-gradient(90deg, var(--accent), #7fd4ff, var(--accent-2));
+    -webkit-background-clip: text; background-clip: text; color: transparent;
+    filter: drop-shadow(0 4px 24px rgba(77,255,136,.25));
+  }
+  .subtitle { font-size: 15px; opacity: .8; max-width: 560px; line-height: 1.6; }
+  .keys {
+    display: flex; flex-wrap: wrap; gap: 10px 22px; justify-content: center;
+    margin-top: 6px; font-size: 13px; opacity: .85;
+  }
+  .keys span { display: inline-flex; align-items: center; gap: 8px; }
+  kbd {
+    background: rgba(255,255,255,.08); border: 1px solid rgba(255,255,255,.2);
+    border-bottom-width: 2px; border-radius: 6px; padding: 3px 8px; font-size: 12px;
+    font-family: inherit;
+  }
+  .cta {
+    margin-top: 10px; font-size: 18px; font-weight: 700; letter-spacing: 1px;
+    padding: 14px 34px; border-radius: 12px; color: #05060a;
+    background: linear-gradient(90deg, var(--accent), #7fd4ff);
+    box-shadow: 0 8px 30px rgba(77,255,136,.35);
+    animation: pulse 1.8s ease-in-out infinite;
+  }
+  @keyframes pulse { 0%,100% { transform: scale(1); } 50% { transform: scale(1.04); } }
+  .big { font-size: clamp(34px, 6vw, 64px); font-weight: 800; }
+  .final { font-size: 22px; opacity: .9; }
+  .final b { color: var(--accent); font-size: 30px; }
+  .cause { font-size: 15px; letter-spacing: .6px; color: var(--accent-2); opacity: .95; }
+  #finalRivals { font-size: 14px !important; opacity: .7 !important; letter-spacing: 1px; }
+  .newbest { color: var(--accent-2); font-weight: 700; letter-spacing: 1px; }
+
+  /* ---------- game over: fades in over the still-running arena ---------- */
+  #overScreen {
+    position: fixed; inset: 0; z-index: 10;
+    display: flex; align-items: center; justify-content: center; padding: 24px;
+    background: radial-gradient(ellipse at center, rgba(6,10,20,.16), rgba(3,5,10,.80));
+    opacity: 0; pointer-events: none;
+    transition: opacity 1.2s ease;
+  }
+  #overScreen.hidden { display: none; }
+  #overScreen.show { opacity: 1; pointer-events: auto; }
+  .overPanel {
+    display: flex; flex-direction: column; align-items: center; gap: 11px;
+    text-align: center; padding: 26px 36px 24px;
+    background: rgba(8,12,22,.72);
+    border: 1px solid rgba(255,84,112,.35);
+    border-radius: 16px;
+    box-shadow: 0 24px 80px rgba(0,0,0,.6);
+    backdrop-filter: blur(6px);
+    transform: translateY(14px);
+    transition: transform 1.2s cubic-bezier(.16,.84,.3,1);
+  }
+  #overScreen.show .overPanel { transform: translateY(0); }
+  .btnrow { display: flex; flex-wrap: wrap; gap: 12px; justify-content: center; margin-top: 6px; }
+  .btn {
+    font-family: inherit; font-size: 14px; font-weight: 700; letter-spacing: .8px;
+    padding: 12px 22px; border-radius: 11px; cursor: pointer;
+    border: 1px solid rgba(255,255,255,.18);
+    background: rgba(255,255,255,.06); color: #e8f0ff;
+    transition: transform .12s ease, background .18s ease, border-color .18s ease;
+  }
+  .btn:hover { background: rgba(255,255,255,.12); border-color: rgba(255,255,255,.34); transform: translateY(-1px); }
+  .btn:active { transform: translateY(0); }
+  .btn.primary {
+    background: linear-gradient(90deg, var(--accent), #7fd4ff); color: #05060a;
+    border-color: transparent; box-shadow: 0 8px 26px rgba(77,255,136,.28);
+  }
+  .btn:disabled { opacity: .4; cursor: default; transform: none; }
+
+  /* ---------- multiplayer ---------- */
+  .mpPanel {
+    display: flex; flex-direction: column; gap: 10px;
+    width: min(92vw, 470px);
+    padding: 22px 26px;
+    background: rgba(8,12,22,.78);
+    border: 1px solid rgba(127,212,255,.25);
+    border-radius: 16px;
+    backdrop-filter: blur(8px);
+    box-shadow: 0 24px 80px rgba(0,0,0,.55);
+  }
+  .mpTitle {
+    font-size: clamp(26px, 5vw, 40px); font-weight: 800; letter-spacing: 5px;
+    color: #7fd4ff; text-shadow: 0 0 30px rgba(127,212,255,.35);
+  }
+  .mpRow { display: flex; align-items: center; gap: 10px; }
+  .mpRow > label { font-size: 10px; letter-spacing: 2px; text-transform: uppercase; opacity: .6; width: 64px; }
+  .mpRow input {
+    flex: 1; min-width: 0; padding: 9px 11px; border-radius: 9px;
+    border: 1px solid rgba(255,255,255,.18); background: rgba(255,255,255,.06);
+    color: #e8f0ff; font-family: inherit; font-size: 14px; outline: none;
+  }
+  .mpRow input:focus { border-color: rgba(127,212,255,.6); }
+  .mpRow input[type="range"] { accent-color: var(--accent); padding: 0; }
+  .mpBotsVal { width: 20px; text-align: center; font-weight: 700; }
+  .mpButtons { justify-content: center; }
+  .mpDivider { text-align: center; font-size: 10px; letter-spacing: 1.5px; text-transform: uppercase; opacity: .45; }
+  .mpStatus { min-height: 16px; text-align: center; font-size: 12px; letter-spacing: .5px; color: var(--accent-2); }
+  .mpLobby { display: flex; flex-direction: column; gap: 8px; align-items: center; padding-top: 2px; }
+  .mpLobbyLabel { font-size: 10px; letter-spacing: 2px; text-transform: uppercase; opacity: .55; }
+  .mpCodeBig { font-size: 34px; font-weight: 800; letter-spacing: 9px; color: var(--accent); }
+  .mpLink { font-size: 10px; opacity: .5; word-break: break-all; text-align: center; }
+
+  #countdown {
+    position: fixed; inset: 0; z-index: 9;
+    display: flex; align-items: center; justify-content: center;
+    pointer-events: none;
+    font-size: clamp(90px, 20vw, 240px); font-weight: 800;
+    color: var(--accent);
+    text-shadow: 0 0 70px rgba(77,255,136,.55), 0 0 24px #000;
+  }
+  #countdown.hidden { display: none; }
+
+  #respawn {
+    position: fixed; left: 50%; bottom: 16%; transform: translateX(-50%);
+    z-index: 9; text-align: center; pointer-events: none;
+    background: rgba(8,12,22,.74); border: 1px solid rgba(255,84,112,.35);
+    border-radius: 14px; padding: 14px 28px;
+    backdrop-filter: blur(6px);
+  }
+  #respawn.hidden { display: none; }
+  #respawn .rtitle { font-size: 22px; font-weight: 800; letter-spacing: 3px; color: var(--danger); }
+  #respawn .rcause { font-size: 13px; color: var(--accent-2); margin-top: 3px; }
+  #respawn .rtimer { font-size: 30px; font-weight: 700; margin-top: 4px; }
+
+  #mpResume {
+    position: fixed; inset: 0; z-index: 12;
+    display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px;
+    background: rgba(3,5,10,.55); cursor: pointer;
+    font-size: 20px; font-weight: 700; letter-spacing: 2px;
+  }
+  #mpResume.hidden { display: none; }
+  #mpResume .rsub { font-size: 13px; font-weight: 400; letter-spacing: 1px; opacity: .7; }
+
+  #timer .value { color: #ffd166; }
+</style>
+</head>
+<body>
+<div id="app"></div>
+
+<div id="hud">
+  <div class="hgroup">
+    <div class="stat" id="score"><span class="label">Score</span><span class="value" id="scoreVal">0</span></div>
+    <div class="stat" id="len"><span class="label">Length</span><span class="value" id="lenVal">0</span></div>
+    <div class="stat" id="spd"><span class="label">Speed</span><span class="value" id="spdVal">0</span></div>
+    <div class="stat" id="mines"><span class="label">Mines</span><span class="value" id="mineVal">0/3</span></div>
+    <div class="stat" id="timer" style="display:none"><span class="label">Time</span><span class="value" id="timerVal">3:00</span></div>
+  </div>
+  <div id="rivals"><span class="rlabel">Rivals</span></div>
+</div>
+<div id="crosshair"></div>
+
+<div id="startScreen" class="overlay">
+  <div class="title">SNAKE·3D</div>
+  <div class="subtitle">You are the snake. Fly through a 3D arena, chomp glowing orbs, and grow — but three rival snakes (VIPER, COBRA, MAMBA) hunt the same orbs. Don't touch the walls, your own body, or a rival's body. If a rival's head clips your tail, they die instead. Grab pink power-ups for mines — Space or left click launches one ahead; it arms, then kills anything that touches it, including you. Crash and your body bursts into orbs for the rivals to feast on — the arena keeps playing while you watch.</div>
+  <div class="keys">
+    <span><kbd>Mouse</kbd> steer (yaw + pitch)</span>
+    <span><kbd>Shift</kbd> / <kbd>Right Click</kbd> boost</span>
+    <span><kbd>Space</kbd> / <kbd>Left Click</kbd> launch mine</span>
+    <span><kbd>F</kbd> wall reflections</span>
+    <span><kbd>Esc</kbd> pause</span>
+  </div>
+  <div class="btnrow">
+    <button class="btn primary" id="soloBtn">Play solo</button>
+    <button class="btn" id="mpBtn">Multiplayer</button>
+  </div>
+</div>
+
+<div id="mpScreen" class="overlay hidden">
+  <div class="mpTitle">MULTIPLAYER</div>
+  <div class="mpPanel">
+    <div class="mpRow">
+      <label for="mpName">Name</label>
+      <input id="mpName" maxlength="12" value="YOU" autocomplete="off" spellcheck="false">
+    </div>
+    <div class="mpRow">
+      <label for="mpBots">Bots</label>
+      <input id="mpBots" type="range" min="0" max="3" step="1" value="0">
+      <span class="mpBotsVal" id="mpBotsVal">0</span>
+    </div>
+    <div class="mpRow mpButtons" id="mpPre">
+      <button class="btn primary" id="mpHost">Host challenge</button>
+    </div>
+    <div class="mpDivider" id="mpDiv">or join with a code</div>
+    <div class="mpRow mpButtons" id="mpJoinRow">
+      <input id="mpCode" maxlength="5" placeholder="CODE" autocomplete="off" spellcheck="false">
+      <button class="btn" id="mpJoin">Join</button>
+    </div>
+    <div class="mpStatus" id="mpStatus"></div>
+    <div class="mpLobby hidden" id="mpLobby">
+      <div class="mpLobbyLabel">Challenge code</div>
+      <div class="mpCodeBig" id="mpCodeBig"></div>
+      <div class="mpLink" id="mpLink"></div>
+      <div class="mpRow mpButtons">
+        <button class="btn" id="mpCopy">Copy link</button>
+        <button class="btn primary" id="mpAction" disabled>Start match</button>
+      </div>
+    </div>
+    <div class="mpRow mpButtons">
+      <button class="btn" id="mpBack">Back</button>
+    </div>
+  </div>
+</div>
+
+<div id="pauseScreen" class="overlay hidden">
+  <div class="big" style="color:#7fd4ff">PAUSED</div>
+  <div class="subtitle">Pointer released.</div>
+  <div class="cta">Click to resume</div>
+</div>
+
+<div id="countdown" class="hidden"><span id="countdownVal">3</span></div>
+
+<div id="respawn" class="hidden">
+  <div class="rtitle">CRASHED</div>
+  <div class="rcause" id="respawnCause"></div>
+  <div class="rtimer">respawning in <span id="respawnVal">3</span></div>
+</div>
+
+<div id="mpResume" class="hidden">
+  <div>CLICK TO RESUME</div>
+  <div class="rsub">the match is still running</div>
+</div>
+
+<div id="resultsScreen" class="overlay hidden">
+  <div class="big" style="color:var(--accent-2)">MATCH OVER</div>
+  <div class="final" id="resultsWinner"></div>
+  <div class="final" id="resultsScores"></div>
+  <div class="btnrow">
+    <button class="btn" id="resultsRematch">Rematch</button>
+    <button class="btn primary" id="resultsBack">Back to menu</button>
+  </div>
+</div>
+
+<div id="overScreen" class="hidden">
+  <div class="overPanel">
+    <div class="big" style="color:var(--danger)">CRASHED</div>
+    <div class="final cause" id="finalCause"></div>
+    <div class="final">Score <b id="finalScore">0</b> &nbsp;·&nbsp; Length <b id="finalLen">0</b></div>
+    <div class="final" id="finalRivals"></div>
+    <div class="newbest hidden" id="newBest">★ NEW BEST ★</div>
+    <div class="btnrow">
+      <button class="btn" id="watchReplay">▶ Watch replay</button>
+      <button class="btn primary" id="retryBtn">Play again</button>
+    </div>
+  </div>
+</div>
+
+<div id="replayModal" class="hidden">
+  <div id="rmView">
+    <div class="rmHead">
+      <span class="rmTag">REPLAY</span>
+      <span class="rmSub" id="rmSub">the final seconds</span>
+      <button class="rmClose" id="replayClose" title="Close (Esc)">✕</button>
+    </div>
+    <div class="rmBar"><div class="rmFill" id="replayFill"></div></div>
+  </div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/objects/Reflector.js"></script>
+<script>
+(() => {
+  "use strict";
+
+  // ------------------------------------------------------------------
+  // Config
+  // ------------------------------------------------------------------
+  const CFG = {
+    arena: { x: 42, y: 54, z: 42 },       // half-extent (x,z) and height (y from 0)
+    startLen: 8,
+    maxLen: 220,
+    spacing: 0.85,                          // body segment spacing
+    headRadius: 0.55,
+    segRadius: 0.5,
+    collideDist: 0.72,                      // head<->segment center distance to die
+    skipSelf: 3,                            // ignore first N segments (neck overlap)
+    baseSpeed: 13,
+    boostSpeed: 21,
+    speedPerFood: 0.5,
+    maxSpeed: 34,
+    growPerFood: 2,
+    minStep: 0.06,                          // record path point every >= this travel
+    eatRadius: 1.7,
+    mouseSens: 0.0022,
+    pitchLimit: 1.55,                       // ~88.8 deg
+    wallMargin: 0.5,
+    reflTex: 256,                           // reflection render target size
+    cpuCount: 3,
+    foodCount: 5,
+    cpu: {
+      baseSpeed: 12,
+      speedPerFood: 0.4,
+      maxSpeed: 27,
+      turnRate: 5.2,                        // rad/s max heading change
+      steerEvery: 0.16,                     // re-plan interval
+      respawn: [2.5, 4.5],                  // dead -> respawn delay range (s)
+      lookAhead: [1.5, 3, 5, 7.5],          // probe distances when scoring a heading
+      safeClear: 1.6,                       // clearance below this is heavily penalized
+    },
+    mine: {
+      pool: 24,                             // max mines in the arena at once
+      carry: 3,                             // max mines a snake can hold
+      pickups: 4,                           // max power-up pickups in the arena
+      pickupRespawn: 8,                     // seconds until a collected pickup returns
+      launchSpeed: 46,                      // initial forward speed
+      drag: 1.8,                            // velocity decay (exp) -> ~25u reach
+      arm: 0.45,                            // seconds before it can detonate
+      life: 12,                             // seconds before it fizzles out
+      killRadius: 1.5,                      // head<->mine distance that detonates
+      cooldown: 0.4,                        // seconds between launches
+      score: 25,                            // points for a kill
+      burst: 24,                            // food orbs from a mine kill
+      debrisLife: 60,                       // wreckage lifetime (s)
+    },
+    mp: {
+      duration: 180,                        // match length (seconds)
+      respawn: 3,                           // respawn delay (seconds)
+      snapshotHz: 20,
+      inputHz: 30,
+      interp: 100,                          // guest interpolation buffer (ms)
+      relayTimeout: 8000,                   // ms before falling back to the relay
+      maxBots: 3,
+    },
+  };
+
+  const COLOR = {
+    bg: 0x05060a,
+    grid: 0x12324a,
+    gridMajor: 0x1c5d7a,
+    wall: 0x1c6ea0,
+    food: 0xffd166,
+    player: { head: 0x4dff88, tail: 0x0e5c3a },
+    guest: { head: 0xffa94d, tail: 0x7a3d00 },
+    cpus: [
+      { name: "VIPER", head: 0xff5470, tail: 0x6b1a2c },
+      { name: "COBRA", head: 0x7fd4ff, tail: 0x14506e },
+      { name: "MAMBA", head: 0xc77dff, tail: 0x4a2170 },
+    ],
+  };
+
+  // ------------------------------------------------------------------
+  // Renderer / scene / camera
+  // ------------------------------------------------------------------
+  const app = document.getElementById("app");
+  const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: "high-performance" });
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+  renderer.setSize(window.innerWidth, window.innerHeight);
+  app.appendChild(renderer.domElement);
+
+  const scene = new THREE.Scene();
+  scene.background = new THREE.Color(COLOR.bg);
+  scene.fog = new THREE.Fog(COLOR.bg, 40, 150);
+
+  const camera = new THREE.PerspectiveCamera(78, window.innerWidth / window.innerHeight, 0.1, 400);
+
+  // Lights
+  scene.add(new THREE.HemisphereLight(0xbfe8ff, 0x0a1420, 0.9));
+  const dir = new THREE.DirectionalLight(0xffffff, 0.7);
+  dir.position.set(20, 60, 10);
+  scene.add(dir);
+
+  // ------------------------------------------------------------------
+  // Arena: floor grid + wireframe box + faint walls.
+  // Rebuildable, because the arena scales with the number of snakes.
+  // ------------------------------------------------------------------
+  let AX = CFG.arena.x, AY = CFG.arena.y, AZ = CFG.arena.z;
+
+  const orientWall = (o, def) => {
+    o.position.set(def.pos[0], def.pos[1], def.pos[2]);
+    o.rotation.set(def.rx || 0, def.ry || 0, 0);
+  };
+
+  let grid = null, floor = null, wire = null, liveStars = null;
+  let wallDefs = [];
+  let mirrors = [];
+  const wallFallbacks = [];
+
+  function disposeObject(obj, parent) {
+    if (!obj) return;
+    (parent || scene).remove(obj);
+    if (obj.geometry) obj.geometry.dispose();
+    if (obj.material) {
+      if (Array.isArray(obj.material)) obj.material.forEach((m) => m.dispose());
+      else obj.material.dispose();
+    }
+  }
+
+  function buildStars() {
+    disposeObject(liveStars);
+    const n = 900;
+    const pos = new Float32Array(n * 3);
+    for (let i = 0; i < n; i++) {
+      pos[i * 3 + 0] = (Math.random() - 0.5) * AX * 2;
+      pos[i * 3 + 1] = Math.random() * AY;
+      pos[i * 3 + 2] = (Math.random() - 0.5) * AZ * 2;
+    }
+    const g = new THREE.BufferGeometry();
+    g.setAttribute("position", new THREE.BufferAttribute(pos, 3));
+    const m = new THREE.PointsMaterial({ color: 0x9fd8ff, size: 0.12, transparent: true, opacity: 0.5, sizeAttenuation: true });
+    liveStars = new THREE.Points(g, m);
+    liveStars.layers.set(2);
+    scene.add(liveStars);
+  }
+
+  function buildWalls() {
+    for (const r of mirrors) {
+      scene.remove(r);
+      if (r.geometry) r.geometry.dispose();
+      if (r.material) r.material.dispose();
+      if (r.getRenderTarget) {
+        const rt = r.getRenderTarget();
+        if (rt && rt.dispose) rt.dispose();
+      }
+    }
+    mirrors = [];
+    for (const m of wallFallbacks) disposeObject(m);
+    wallFallbacks.length = 0;
+
+    // plane normals must point INTO the arena — the reflector only renders
+    // when the camera sits on the normal side of the plane
+    wallDefs = [
+      { w: AX * 2, h: AY, pos: [0, AY / 2, -AZ] },                    // back, +Z
+      { w: AX * 2, h: AY, pos: [0, AY / 2, AZ], ry: Math.PI },        // front, -Z
+      { w: AZ * 2, h: AY, pos: [-AX, AY / 2, 0], ry: Math.PI / 2 },   // left, +X
+      { w: AZ * 2, h: AY, pos: [AX, AY / 2, 0], ry: -Math.PI / 2 },   // right, -X
+      { w: AX * 2, h: AZ * 2, pos: [0, AY, 0], rx: Math.PI / 2 },     // ceiling, -Y
+    ];
+
+    if (typeof THREE.Reflector === "function") {
+      for (const def of wallDefs) {
+        const r = new THREE.Reflector(new THREE.PlaneGeometry(def.w, def.h), {
+          textureWidth: CFG.reflTex,
+          textureHeight: CFG.reflTex,
+        });
+        orientWall(r, def);
+        // keep the reflector's render target + texture matrix, blend through a glass material
+        const tDiffuse = r.material.uniforms.tDiffuse.value;
+        const textureMatrix = r.material.uniforms.textureMatrix.value;
+        r.material.dispose();
+        r.material = new THREE.ShaderMaterial({
+          uniforms: {
+            tDiffuse: { value: tDiffuse },
+            textureMatrix: { value: textureMatrix },
+            uColor: { value: new THREE.Color(0x0e2a3d) },
+            uBaseAlpha: { value: 0.16 },
+            uRefl: { value: 1.0 },
+            uFresnel: { value: 2.2 },
+          },
+          transparent: true,
+          depthWrite: false,
+          side: THREE.DoubleSide,
+          vertexShader: `
+            uniform mat4 textureMatrix;
+            varying vec4 vUv;
+            varying vec3 vNormalV;
+            varying vec3 vViewV;
+            void main() {
+              vUv = textureMatrix * vec4(position, 1.0);
+              vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
+              vNormalV = normalize(normalMatrix * normal);
+              vViewV = normalize(-mvPosition.xyz);
+              gl_Position = projectionMatrix * mvPosition;
+            }`,
+          fragmentShader: `
+            uniform sampler2D tDiffuse;
+            uniform vec3 uColor;
+            uniform float uBaseAlpha;
+            uniform float uRefl;
+            uniform float uFresnel;
+            varying vec4 vUv;
+            varying vec3 vNormalV;
+            varying vec3 vViewV;
+            void main() {
+              vec3 refl = texture2DProj(tDiffuse, vUv).rgb;
+              // glass: faint base tint, stronger reflection at grazing angles
+              float fres = pow(1.0 - abs(dot(normalize(vNormalV), normalize(vViewV))), uFresnel);
+              float mixAmt = clamp(uRefl * (0.3 + 0.7 * fres), 0.0, 1.0);
+              gl_FragColor = vec4(mix(uColor, refl, mixAmt), clamp(uBaseAlpha + mixAmt * 0.5, 0.0, 1.0));
+            }`,
+        });
+        scene.add(r);
+        mirrors.push(r);
+      }
+      // mirrors must not render inside each other: hide all mirrors for the
+      // duration of every reflection pass
+      for (const m of mirrors) {
+        const orig = m.onBeforeRender;
+        m.onBeforeRender = (renderer, theScene, camera) => {
+          const vis = mirrors.map((x) => x.visible);
+          for (const x of mirrors) x.visible = false;
+          orig.call(m, renderer, theScene, camera);
+          mirrors.forEach((x, i) => { x.visible = vis[i]; });
+        };
+      }
+    } else {
+      const wallMat = new THREE.MeshBasicMaterial({ color: 0x0e2a3d, transparent: true, opacity: 0.18, side: THREE.DoubleSide, depthWrite: false });
+      for (const def of wallDefs) {
+        const m = new THREE.Mesh(new THREE.PlaneGeometry(def.w, def.h), wallMat);
+        orientWall(m, def);
+        scene.add(m);
+        wallFallbacks.push(m);
+      }
+    }
+  }
+
+  function buildArenaGeometry() {
+    disposeObject(grid);
+    disposeObject(floor);
+    disposeObject(wire);
+
+    grid = new THREE.GridHelper(Math.max(AX, AZ) * 2, Math.max(AX, AZ) * 2, COLOR.gridMajor, COLOR.grid);
+    grid.position.y = 0;
+    scene.add(grid);
+
+    floor = new THREE.Mesh(
+      new THREE.PlaneGeometry(AX * 2, AZ * 2),
+      new THREE.MeshBasicMaterial({ color: 0x071019, transparent: true, opacity: 0.55, side: THREE.DoubleSide })
+    );
+    floor.rotation.x = -Math.PI / 2;
+    floor.position.y = -0.02;
+    scene.add(floor);
+
+    wire = new THREE.LineSegments(
+      new THREE.EdgesGeometry(new THREE.BoxGeometry(AX * 2, AY, AZ * 2)),
+      new THREE.LineBasicMaterial({ color: COLOR.wall, transparent: true, opacity: 0.5 })
+    );
+    wire.position.y = AY / 2;
+    scene.add(wire);
+
+    buildWalls();
+    buildStars();
+  }
+
+  buildArenaGeometry();
+  camera.layers.enable(2);   // main camera still sees the stars
+
+  // ------------------------------------------------------------------
+  // Snake (player + CPU rivals share this class)
+  // ------------------------------------------------------------------
+  const snakesGroup = new THREE.Group();
+  scene.add(snakesGroup);
+
+  const segGeo = new THREE.SphereGeometry(CFG.segRadius, 20, 16);
+  const headGeo = new THREE.SphereGeometry(CFG.headRadius, 24, 18);
+
+  class Snake {
+    constructor(name, colors, isHuman) {
+      this.name = name;
+      this.colors = colors;
+      this.isHuman = isHuman;
+      this.isPlayer = false;      // set per match: this client's own snake
+      this.head = new THREE.Vector3();
+      this.dir = new THREE.Vector3(0, 0, -1);   // current heading (unit)
+      this.desired = new THREE.Vector3(0, 0, -1); // AI target heading
+      this.yaw = 0;
+      this.pitch = 0;
+      this.bodyLen = CFG.startLen;
+      this.speed = CFG.baseSpeed;
+      this.turnRate = isHuman ? 0 : CFG.cpu.turnRate * (0.9 + Math.random() * 0.3);
+      this.score = 0;
+      this.alive = true;
+      this.respawnTimer = 0;
+      this.steerTimer = 0;
+      this.mines = 0;
+      this.fireCd = 0;
+      this.path = [];
+      this.segs = [];
+      this._euler = new THREE.Euler(0, 0, 0, "YXZ");
+
+      const cHead = new THREE.Color(colors.head);
+      const cTail = new THREE.Color(colors.tail);
+      const tmp = new THREE.Color();
+      for (let i = 0; i < CFG.maxLen; i++) {
+        const t = CFG.maxLen > 1 ? i / (CFG.maxLen - 1) : 0;
+        tmp.copy(cHead).lerp(cTail, t);
+        const mat = new THREE.MeshStandardMaterial({
+          color: tmp, emissive: tmp, emissiveIntensity: 0.35,
+          roughness: 0.35, metalness: 0.1,
+        });
+        const m = new THREE.Mesh(i === 0 ? headGeo : segGeo, mat);
+        m.visible = false;
+        snakesGroup.add(m);
+        this.segs.push(m);
+      }
+    }
+
+    reset(pos, dirVec, keepScore) {
+      this.head.copy(pos);
+      this.dir.copy(dirVec);
+      if (this.dir.lengthSq() < 1e-9) this.dir.set(0, 0, -1);
+      this.dir.normalize();
+      this.desired.copy(this.dir);
+      this.bodyLen = CFG.startLen;
+      this.speed = this.isHuman ? CFG.baseSpeed : CFG.cpu.baseSpeed * (0.92 + Math.random() * 0.16);
+      if (!keepScore) this.score = 0;
+      this.alive = true;
+      this.respawnTimer = 0;
+      this.steerTimer = Math.random() * CFG.cpu.steerEvery;
+      this.mines = 0;
+      this.fireCd = 0;
+      this.initPath();
+      this.layoutBody();
+    }
+
+    // Player heading comes from mouse yaw/pitch
+    syncDir() {
+      this._euler.set(this.pitch, this.yaw, 0);
+      this.dir.set(0, 0, -1).applyEuler(this._euler);
+    }
+
+    initPath() {
+      this.path = [];
+      // pre-fill a straight tail extending behind the current heading
+      const steps = Math.ceil((this.bodyLen * CFG.spacing) / CFG.minStep) + 8;
+      for (let i = steps; i >= 0; i--) {
+        this.path.push(new THREE.Vector3(
+          this.head.x - this.dir.x * i * CFG.minStep,
+          this.head.y - this.dir.y * i * CFG.minStep,
+          this.head.z - this.dir.z * i * CFG.minStep
+        ));
+      }
+      this.path[this.path.length - 1].copy(this.head);
+    }
+
+    recordPath() {
+      const last = this.path[this.path.length - 1];
+      if (this.head.distanceTo(last) >= CFG.minStep) {
+        this.path.push(this.head.clone());
+        // prune old points beyond what the tail needs
+        const needed = Math.ceil((this.bodyLen * CFG.spacing) / CFG.minStep) + 6;
+        if (this.path.length > needed) this.path.splice(0, this.path.length - needed);
+      }
+    }
+
+    // Rotate `dir` toward `target`, limited by turnRate (rad/s)
+    turnToward(target, dt) {
+      let c = this.dir.dot(target);
+      c = c > 1 ? 1 : c < -1 ? -1 : c;
+      const ang = Math.acos(c);
+      const maxAng = this.turnRate * dt;
+      if (ang < 1e-5 || ang <= maxAng) { this.dir.copy(target); return; }
+      _axis.crossVectors(this.dir, target);
+      if (_axis.lengthSq() < 1e-8) {
+        // (nearly) opposite heading: pick any perpendicular axis
+        const up = Math.abs(this.dir.y) < 0.9 ? Y_AXIS : X_AXIS;
+        _axis.crossVectors(this.dir, up);
+      }
+      _axis.normalize();
+      this.dir.applyAxisAngle(_axis, maxAng);
+    }
+
+    move(dt, desired, spdOverride) {
+      if (desired && this.turnRate > 0) this.turnToward(desired, dt);
+      const v = spdOverride === undefined ? this.speed : spdOverride;
+      this.head.addScaledVector(this.dir, v * dt);
+      this.recordPath();
+      this.layoutBody();
+    }
+
+    // Fill segs by walking the path back from the head.
+    // Segment s sits at distance (s+1)*spacing from the head along the traveled path.
+    layoutBody() {
+      const path = this.path;
+      if (path.length === 0) return;
+      let idx = path.length - 1;   // current path point (start = head)
+      let cur = path[idx];
+      let acc = 0;                 // distance from head to `cur`
+      let nextAt = CFG.spacing;    // distance (from head) of the next segment to place
+      let seg = 0;
+
+      while (seg < this.bodyLen) {
+        const mesh = this.segs[seg];
+        if (idx === 0) {
+          // Path exhausted: pin the rest to the oldest point
+          mesh.position.copy(cur);
+          mesh.visible = true;
+          seg++;
+          continue;
+        }
+        const prev = path[idx - 1];
+        const segLen = cur.distanceTo(prev);
+        if (acc + segLen >= nextAt - 1e-9) {
+          // This body segment lands between cur and prev
+          const need = nextAt - acc;
+          const t = segLen > 1e-6 ? need / segLen : 0;
+          mesh.position.copy(cur).lerp(prev, t);
+          mesh.visible = true;
+          seg++;
+          nextAt += CFG.spacing;
+          // Don't consume the path segment yet; the next body segment may
+          // also land on the same path segment (multiple fits).
+        } else {
+          // Not far enough yet — consume this path segment and keep walking back
+          acc += segLen;
+          cur = prev;
+          idx--;
+        }
+      }
+      for (let s = seg; s < CFG.maxLen; s++) this.segs[s].visible = false;
+    }
+
+    die() {
+      if (!this.alive) return;
+      this.alive = false;
+      for (let i = 0; i < this.segs.length; i++) this.segs[i].visible = false;
+      this.path.length = 0;
+    }
+
+    eat(spdPerFood, maxSpd) {
+      this.bodyLen = Math.min(CFG.maxLen, this.bodyLen + CFG.growPerFood);
+      this.speed = Math.min(maxSpd, this.speed + spdPerFood);
+    }
+  }
+
+  // temp vectors (shared, single-threaded)
+  const X_AXIS = new THREE.Vector3(1, 0, 0);
+  const Y_AXIS = new THREE.Vector3(0, 1, 0);
+  const _axis = new THREE.Vector3();
+  const _a1 = new THREE.Vector3();
+  const _a2 = new THREE.Vector3();
+  const _look = new THREE.Vector3();
+  const _panic = new THREE.Vector3();
+  const _hp = new THREE.Vector3();
+  const _hd = new THREE.Vector3();
+  const _rp = new THREE.Vector3();
+  const _rp2 = new THREE.Vector3();
+  const CANDS = [];
+  for (let i = 0; i < 10; i++) CANDS.push(new THREE.Vector3());
+
+  // ------------------------------------------------------------------
+  // Snakes: a pool of 5 slots (2 humans + up to 3 bots), activated per match
+  // ------------------------------------------------------------------
+  const MAX_SNAKES = 5;
+  const snakePool = [];
+  const snakes = [];       // active this match
+  let cpus = [];           // active bots
+  let player = null;       // this client's own snake
+  let remote = null;       // the other human (multiplayer)
+  let rivals = [];         // HUD roster: every snake except `player`
+  let rivalRows = [];
+
+  {
+    const defs = [
+      { name: "YOU", colors: COLOR.player },      // slot 0: host / solo
+      { name: "RIVAL", colors: COLOR.guest },     // slot 1: guest
+      { name: "VIPER", colors: COLOR.cpus[0] },   // slot 2
+      { name: "COBRA", colors: COLOR.cpus[1] },   // slot 3
+      { name: "MAMBA", colors: COLOR.cpus[2] },   // slot 4
+    ];
+    for (const def of defs) {
+      const human = def.name === "YOU" || def.name === "RIVAL";
+      snakePool.push(new Snake(def.name, { head: def.colors.head, tail: def.colors.tail }, human));
+    }
+  }
+
+  // starting corners (opposite the arena center), recomputed per arena size
+  function cpuHomePos(i) {
+    const homes = [
+      [-AX * 0.55, AY * 0.42, -AZ * 0.55],
+      [ AX * 0.55, AY * 0.42,  AZ * 0.55],
+      [-AX * 0.55, AY * 0.42,  AZ * 0.55],
+      [ AX * 0.55, AY * 0.42, -AZ * 0.55],
+    ];
+    return homes[i % homes.length];
+  }
+
+  // ------------------------------------------------------------------
+  // Food: shared orbs. A fixed pool sized for the busiest arena; only the
+  // first `foodCount` are active each match (count scales with snake count).
+  // ------------------------------------------------------------------
+  const foodGroup = new THREE.Group();
+  scene.add(foodGroup);
+
+  const MAX_FOOD = 30;
+  const foods = [];
+  let foodCount = CFG.foodCount;
+  {
+    const geo = new THREE.SphereGeometry(0.8, 24, 18);
+    const mat = new THREE.MeshStandardMaterial({ color: COLOR.food, emissive: COLOR.food, emissiveIntensity: 0.9, roughness: 0.3 });
+    for (let i = 0; i < MAX_FOOD; i++) {
+      const mesh = new THREE.Mesh(geo, mat);
+      mesh.visible = false;
+      // cap the point lights — 30 of them would wreck the standard materials
+      let light = null;
+      if (i < 6) {
+        light = new THREE.PointLight(COLOR.food, 0.9, 20);
+        mesh.add(light);
+      }
+      foodGroup.add(mesh);
+      foods.push({ mesh, light, pos: new THREE.Vector3(), phase: Math.random() * Math.PI * 2, active: false });
+    }
+  }
+
+  function resetFoods(n) {
+    foodCount = Math.max(1, Math.min(MAX_FOOD, n));
+    for (let i = 0; i < foods.length; i++) {
+      const f = foods[i];
+      if (i < foodCount) {
+        f.active = true;
+        spawnFood(f);
+        f.mesh.visible = true;
+      } else {
+        f.active = false;
+        f.mesh.visible = false;
+      }
+    }
+  }
+
+  // Explosion debris: when the player crashes, every body segment becomes a
+  // food orb. Each orb borrows the material of the segment it came from, so the
+  // wreckage keeps the snake's exact colour gradient — and rivals can eat it.
+  const DEBRIS_MAX = CFG.maxLen + 24 + CFG.mine.burst * 8;
+  const debrisGroup = new THREE.Group();
+  scene.add(debrisGroup);
+
+  const debris = [];
+  {
+    const geo = new THREE.SphereGeometry(0.62, 12, 10);
+    const fallback = new THREE.MeshStandardMaterial({
+      color: COLOR.player.head, emissive: COLOR.player.head,
+      emissiveIntensity: 0.6, roughness: 0.35,
+    });
+    for (let i = 0; i < DEBRIS_MAX; i++) {
+      const mesh = new THREE.Mesh(geo, fallback);
+      mesh.visible = false;
+      debrisGroup.add(mesh);
+      debris.push({
+        mesh, pos: new THREE.Vector3(), vel: new THREE.Vector3(),
+        active: false, age: 0, life: 0, phase: Math.random() * Math.PI * 2,
+      });
+    }
+  }
+
+  const _blastC = new THREE.Vector3();
+
+  function resetPool(pool) {
+    for (const d of pool) {
+      d.active = false;
+      d.vel.set(0, 0, 0);
+      d.mesh.visible = false;
+    }
+  }
+
+  // One orb per visible segment of `segs[0..count)`, thrown outward from the
+  // body's centroid. `maxOrbs` samples evenly along the body (so a compact
+  // burst still carries the full colour gradient). Returns the orbs spawned.
+  function explodeBody(segs, count, pool, maxOrbs) {
+    const idx = [];
+    for (let i = 0; i < count; i++) {
+      if (segs[i].visible) idx.push(i);
+    }
+    if (idx.length === 0) return 0;
+
+    _blastC.set(0, 0, 0);
+    for (const i of idx) _blastC.add(segs[i].position);
+    _blastC.multiplyScalar(1 / idx.length);
+
+    const want = Math.min(
+      maxOrbs === undefined ? idx.length : Math.min(maxOrbs, idx.length),
+      pool.length
+    );
+    // fill free slots first; only recycle live wreckage if the pool runs dry
+    const slots = [];
+    for (let i = 0; i < pool.length && slots.length < want; i++) {
+      if (!pool[i].active) slots.push(i);
+    }
+    for (let i = 0; i < pool.length && slots.length < want; i++) {
+      if (pool[i].active) slots.push(i);
+    }
+
+    for (let j = 0; j < want; j++) {
+      const t = want === 1 ? 0 : j / (want - 1);
+      const seg = segs[idx[Math.round(t * (idx.length - 1))]];
+      const d = pool[slots[j]];
+      d.active = true;
+      d.age = 0;
+      d.life = CFG.mine.debrisLife;
+      d.pos.copy(seg.position);
+      d.vel.copy(seg.position).sub(_blastC);
+      if (d.vel.lengthSq() < 1e-6) d.vel.set(0, 1, 0); else d.vel.normalize();
+      d.vel.multiplyScalar(1.2 + Math.random() * 2.4);
+      d.vel.y += 0.5 + Math.random() * 1.7;
+      d.mesh.position.copy(seg.position);
+      d.mesh.material = seg.material;
+      d.mesh.rotation.set(0, 0, 0);
+      d.mesh.scale.setScalar(0.01);
+      d.mesh.visible = true;
+    }
+    return want;
+  }
+
+  // Drifting wreckage: scatter velocity eased away, orbs pop in, pulse, and
+  // eventually shrink away so long matches don't silt up the arena.
+  function updatePool(pool, dt, time) {
+    const damp = Math.exp(-1.7 * dt);
+    for (const d of pool) {
+      if (!d.active) continue;
+      d.age += dt;
+      d.life -= dt;
+      if (d.life <= 0) {
+        d.active = false;
+        d.mesh.visible = false;
+        continue;
+      }
+      d.vel.multiplyScalar(damp);
+      d.pos.addScaledVector(d.vel, dt);
+      const lim = 1.2;
+      if (d.pos.x < -AX + lim) { d.pos.x = -AX + lim; d.vel.x *= -0.35; }
+      if (d.pos.x >  AX - lim) { d.pos.x =  AX - lim; d.vel.x *= -0.35; }
+      if (d.pos.y < lim)       { d.pos.y = lim;       d.vel.y *= -0.35; }
+      if (d.pos.y > AY - lim)  { d.pos.y = AY - lim;  d.vel.y *= -0.35; }
+      if (d.pos.z < -AZ + lim) { d.pos.z = -AZ + lim; d.vel.z *= -0.35; }
+      if (d.pos.z >  AZ - lim) { d.pos.z =  AZ - lim; d.vel.z *= -0.35; }
+      d.mesh.position.copy(d.pos);
+      const pop = Math.min(1, d.age / 0.22);
+      const fade = Math.min(1, d.life / 4);          // shrink away at the end
+      d.mesh.scale.setScalar(pop * fade * (1 + Math.sin(time * 4.5 + d.phase) * 0.12));
+      d.mesh.rotation.y += dt * 0.9;
+    }
+  }
+
+  // An orb sitting on the lens just reads as a wall of colour — hide any that
+  // the active camera is practically inside.
+  function cullNearCamera(pool, camPos, r2) {
+    for (const d of pool) {
+      if (d.active) d.mesh.visible = d.pos.distanceToSquared(camPos) > r2;
+    }
+  }
+
+  // ------------------------------------------------------------------
+  // Power-ups (mine ammo) + mines + detonation shockwaves
+  // ------------------------------------------------------------------
+  const powerGroup = new THREE.Group();
+  scene.add(powerGroup);
+  const powerups = [];
+  {
+    const geo = new THREE.OctahedronGeometry(0.55, 0);
+    const ringGeo = new THREE.TorusGeometry(0.95, 0.035, 6, 24);
+    const ringMat = new THREE.MeshBasicMaterial({ color: 0xff9fd0, transparent: true, opacity: 0.75 });
+    for (let i = 0; i < CFG.mine.pickups; i++) {
+      const mesh = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({
+        color: 0xff4d9e, emissive: 0xff4d9e, emissiveIntensity: 0.9,
+        roughness: 0.25, metalness: 0.4,
+      }));
+      const ring = new THREE.Mesh(ringGeo, ringMat);
+      ring.rotation.x = Math.PI / 2;
+      mesh.add(ring);
+      mesh.visible = false;
+      powerGroup.add(mesh);
+      powerups.push({
+        mesh, ring, pos: new THREE.Vector3(),
+        active: false, respawnT: 0, phase: Math.random() * Math.PI * 2,
+      });
+    }
+  }
+
+  function spawnPowerup(p) {
+    randomFoodPos(p.pos);
+    p.mesh.position.copy(p.pos);
+    p.active = true;
+    p.mesh.visible = true;
+  }
+
+  function resetPowerups() {
+    // scale with the roster: 1 pickup for a duel, up to 4 in a busy arena
+    const n = Math.max(1, Math.min(powerups.length, Math.round(snakes.length / 2)));
+    powerups.forEach((p, i) => {
+      p.respawnT = 0;
+      if (i < n) spawnPowerup(p);
+      else { p.active = false; p.mesh.visible = false; }
+    });
+  }
+
+  function updatePowerups(dt, time) {
+    for (const p of powerups) {
+      if (!p.active) {
+        if (p.respawnT > 0) {
+          p.respawnT -= dt;
+          if (p.respawnT <= 0) spawnPowerup(p);
+        }
+        continue;
+      }
+      p.mesh.position.set(p.pos.x, p.pos.y + Math.sin(time * 2 + p.phase) * 0.25, p.pos.z);
+      p.mesh.rotation.y += dt * 1.4;
+      p.ring.rotation.z += dt * 2.2;
+      p.mesh.scale.setScalar(1 + Math.sin(time * 4 + p.phase) * 0.1);
+    }
+  }
+
+  // Human players pick these up — the CPU rivals don't fire mines.
+  function collectPowerups() {
+    const r2 = CFG.eatRadius * CFG.eatRadius;
+    for (const s of snakes) {
+      if (!s.alive || !s.isHuman) continue;
+      for (const p of powerups) {
+        if (!p.active) continue;
+        if (p.mesh.position.distanceToSquared(s.head) < r2) {
+          p.active = false;
+          p.mesh.visible = false;
+          p.respawnT = CFG.mine.pickupRespawn;
+          s.mines = Math.min(CFG.mine.carry, s.mines + 1);
+          if (s.isPlayer) { sfxPower(); updateHUD(); }
+          break;
+        }
+      }
+    }
+  }
+
+  const mineGroup = new THREE.Group();
+  scene.add(mineGroup);
+  const mines = [];
+  {
+    const geo = new THREE.OctahedronGeometry(0.5, 0);
+    const cageGeo = new THREE.EdgesGeometry(geo);
+    for (let i = 0; i < CFG.mine.pool; i++) {
+      const mesh = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({
+        color: 0xff9f43, emissive: 0xff9f43, emissiveIntensity: 0.9,
+        roughness: 0.3, metalness: 0.5,
+      }));
+      const cage = new THREE.LineSegments(cageGeo, new THREE.LineBasicMaterial({
+        color: 0xffc078, transparent: true, opacity: 0.9,
+      }));
+      mesh.add(cage);
+      mesh.visible = false;
+      mineGroup.add(mesh);
+      mines.push({
+        mesh, pos: new THREE.Vector3(), vel: new THREE.Vector3(),
+        active: false, armed: false, age: 0, owner: null,
+        phase: Math.random() * Math.PI * 2,
+      });
+    }
+  }
+
+  function resetMines() {
+    for (const m of mines) {
+      m.active = false;
+      m.armed = false;
+      m.owner = null;
+      m.vel.set(0, 0, 0);
+      m.mesh.visible = false;
+    }
+  }
+
+  function spawnMine(s) {
+    let m = null;
+    for (const x of mines) { if (!x.active) { m = x; break; } }
+    if (!m) return false;
+    m.active = true;
+    m.armed = false;
+    m.age = 0;
+    m.owner = s;
+    m.pos.copy(s.head).addScaledVector(s.dir, 1.2);
+    m.vel.copy(s.dir).multiplyScalar(CFG.mine.launchSpeed);
+    m.mesh.position.copy(m.pos);
+    m.mesh.rotation.set(0, 0, 0);
+    m.mesh.scale.setScalar(0.4);
+    m.mesh.material.emissiveIntensity = 0.7;
+    m.mesh.visible = true;
+    return true;
+  }
+
+  function fireMine(s) {
+    if (!s.alive || s.mines <= 0 || s.fireCd > 0) return;
+    if (!spawnMine(s)) return;
+    s.mines--;
+    s.fireCd = CFG.mine.cooldown;
+    sfxLaunch();
+    updateHUD();
+  }
+
+  // Shared kill path: the player uses the existing death flow (which handles
+  // its own full-body blast), rivals burst into a compact coloured food burst.
+  function killSnake(victim, killer) {
+    if (!victim.alive) return;
+    if (victim.isPlayer) {
+      const mineCause = !killer ? "a mine"
+        : killer === victim ? "your own mine"
+        : killer.name + "'s mine";
+      playerDied(mineCause);
+    } else {
+      explodeBody(victim.segs, victim.bodyLen, debris, victim.isHuman ? undefined : CFG.mine.burst);
+      victim.die();
+      victim.respawnTimer = victim.isHuman ? CFG.mp.respawn
+        : CFG.cpu.respawn[0] + Math.random() * (CFG.cpu.respawn[1] - CFG.cpu.respawn[0]);
+      sfxCpuDie();
+    }
+    if (killer && killer !== victim && killer.isHuman && killer.alive) {
+      killer.score += CFG.mine.score;
+      if (killer.isPlayer) updateHUD();
+    }
+  }
+
+  function makeWavePool(parent, count) {
+    const geo = new THREE.IcosahedronGeometry(1, 1);
+    const pool = [];
+    for (let i = 0; i < count; i++) {
+      const mesh = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({
+        color: 0xffb066, transparent: true, opacity: 0.9,
+        wireframe: true, depthWrite: false,
+      }));
+      mesh.visible = false;
+      parent.add(mesh);
+      pool.push({ mesh, age: 0, active: false, max: 0.45 });
+    }
+    return pool;
+  }
+
+  function spawnWave(pool, pos) {
+    let w = null;
+    for (const x of pool) { if (!x.active) { w = x; break; } }
+    if (!w) w = pool[0];
+    w.active = true;
+    w.age = 0;
+    w.mesh.position.copy(pos);
+    w.mesh.scale.setScalar(0.4);
+    w.mesh.material.opacity = 0.9;
+    w.mesh.visible = true;
+  }
+
+  function updateWaves(pool, dt) {
+    for (const w of pool) {
+      if (!w.active) continue;
+      w.age += dt;
+      const t = w.age / w.max;
+      if (t >= 1) { w.active = false; w.mesh.visible = false; continue; }
+      w.mesh.scale.setScalar(0.4 + t * 5.5);
+      w.mesh.material.opacity = 0.9 * (1 - t);
+      w.mesh.rotation.y += dt * 2;
+    }
+  }
+
+  const shockwaves = makeWavePool(scene, 6);
+
+  function detonateMine(m, victim) {
+    m.active = false;
+    m.mesh.visible = false;
+    m.vel.set(0, 0, 0);
+    spawnWave(shockwaves, m.pos);
+    sfxMineBlast();
+    if (victim) killSnake(victim, m.owner);
+  }
+
+  function updateMines(dt, time) {
+    const r2 = CFG.mine.killRadius * CFG.mine.killRadius;
+    for (const m of mines) {
+      if (!m.active) continue;
+      m.age += dt;
+      if (m.age >= CFG.mine.life) {
+        m.active = false;
+        m.mesh.visible = false;
+        continue;
+      }
+      if (!m.armed && m.age >= CFG.mine.arm) m.armed = true;
+
+      // launch momentum bleeds off; it settles like a mine
+      m.vel.multiplyScalar(Math.exp(-CFG.mine.drag * dt));
+      m.pos.addScaledVector(m.vel, dt);
+      const lim = 1.0;
+      if (m.pos.x < -AX + lim) { m.pos.x = -AX + lim; m.vel.set(0, 0, 0); }
+      if (m.pos.x >  AX - lim) { m.pos.x =  AX - lim; m.vel.set(0, 0, 0); }
+      if (m.pos.y < lim)       { m.pos.y = lim;       m.vel.set(0, 0, 0); }
+      if (m.pos.y > AY - lim)  { m.pos.y = AY - lim;  m.vel.set(0, 0, 0); }
+      if (m.pos.z < -AZ + lim) { m.pos.z = -AZ + lim; m.vel.set(0, 0, 0); }
+      if (m.pos.z >  AZ - lim) { m.pos.z =  AZ - lim; m.vel.set(0, 0, 0); }
+
+      m.mesh.position.copy(m.pos);
+      m.mesh.rotation.y += dt * 1.6;
+      m.mesh.rotation.x += dt * 0.9;
+      const blink = m.armed
+        ? 0.8 + 0.2 * Math.sin(time * (m.age > CFG.mine.life - 2 ? 18 : 7) + m.phase)
+        : 0.55;
+      m.mesh.scale.setScalar(Math.min(1, m.age / 0.15) * blink);
+      m.mesh.material.emissiveIntensity = m.armed ? 1.2 : 0.6;
+
+      // detonate on head contact; the owner is safe until it arms
+      for (const s of snakes) {
+        if (!s.alive) continue;
+        if (s === m.owner && !m.armed) continue;
+        if (s.head.distanceToSquared(m.pos) < r2) {
+          detonateMine(m, s);
+          break;
+        }
+      }
+    }
+  }
+
+  function randomFoodPos(out) {
+    const m = 3;
+    for (let tries = 0; tries < 40; tries++) {
+      out.set(
+        (Math.random() * 2 - 1) * (AX - m),
+        m + Math.random() * (AY - 2 * m),
+        (Math.random() * 2 - 1) * (AZ - m)
+      );
+      // keep away from every snake's head and body
+      let ok = true;
+      for (const s of snakes) {
+        if (!s.alive) continue;
+        if (out.distanceTo(s.head) < 10) { ok = false; break; }
+        for (let i = 0; ok && i < s.bodyLen; i++) {
+          const seg = s.segs[i];
+          if (seg.visible && seg.position.distanceTo(out) < 4) ok = false;
+        }
+      }
+      if (ok) return true;
+    }
+    // fallback: any point
+    out.set(0, AY * 0.5, 0);
+    return true;
+  }
+
+  function spawnFood(f) {
+    randomFoodPos(f.pos);
+    f.mesh.position.copy(f.pos);
+  }
+
+  function eatAll() {
+    const r2 = CFG.eatRadius * CFG.eatRadius;
+    const grow = (s) => {
+      s.eat(s.isHuman ? CFG.speedPerFood : CFG.cpu.speedPerFood,
+             s.isHuman ? CFG.maxSpeed : CFG.cpu.maxSpeed);
+      if (s.isHuman) {
+        s.score += 10;
+        if (s.isPlayer) { sfxEat(); updateHUD(); }
+      }
+    };
+    for (const s of snakes) {
+      if (!s.alive) continue;
+      let ate = false;
+      for (const f of foods) {
+        if (!f.active) continue;
+        if (f.pos.distanceToSquared(s.head) < r2) { spawnFood(f); grow(s); ate = true; break; }
+      }
+      // one orb per snake per frame — then the wreckage
+      if (!ate) {
+        for (const d of debris) {
+          if (!d.active) continue;
+          if (d.pos.distanceToSquared(s.head) < r2) {
+            d.active = false;
+            d.mesh.visible = false;
+            grow(s);
+            break;
+          }
+        }
+      }
+    }
+  }
+
+  // ------------------------------------------------------------------
+  // Audio (tiny WebAudio SFX, no assets)
+  // ------------------------------------------------------------------
+  let actx = null;
+  function audio() {
+    if (!actx) {
+      try { actx = new (window.AudioContext || window.webkitAudioContext)(); } catch (e) {}
+    }
+    return actx;
+  }
+  function beep(freq, dur, type = "sine", gain = 0.15, slideTo = null) {
+    const ctx = audio();
+    if (!ctx) return;
+    const o = ctx.createOscillator();
+    const g = ctx.createGain();
+    o.type = type;
+    o.frequency.setValueAtTime(freq, ctx.currentTime);
+    if (slideTo) o.frequency.exponentialRampToValueAtTime(slideTo, ctx.currentTime + dur);
+    g.gain.setValueAtTime(gain, ctx.currentTime);
+    g.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + dur);
+    o.connect(g).connect(ctx.destination);
+    o.start();
+    o.stop(ctx.currentTime + dur + 0.02);
+  }
+  const sfxEat = () => { beep(520, 0.12, "triangle", 0.18, 880); };
+  const sfxOver = () => { beep(320, 0.5, "sawtooth", 0.16, 90); };
+  const sfxCpuDie = () => { beep(180, 0.16, "square", 0.045); };
+  const sfxBlast = () => {
+    beep(180, 0.5, "sawtooth", 0.18, 42);
+    beep(96, 0.75, "square", 0.1, 30);
+  };
+  const sfxPower = () => { beep(660, 0.14, "triangle", 0.16, 1320); };
+  const sfxLaunch = () => { beep(300, 0.12, "square", 0.09, 140); };
+  const sfxMineBlast = () => {
+    beep(120, 0.4, "sawtooth", 0.15, 40);
+    beep(70, 0.5, "square", 0.09, 28);
+  };
+
+  // ------------------------------------------------------------------
+  // Collision helpers
+  // ------------------------------------------------------------------
+  function hitWalls(p) {
+    return wallHitName(p) !== null;
+  }
+
+  // Which arena face did `p` cross? Names are absolute (the arena doesn't move).
+  function wallHitName(p) {
+    const m = CFG.wallMargin;
+    if (p.x < -AX + m) return "the left wall";
+    if (p.x >  AX - m) return "the right wall";
+    if (p.y <  m)      return "the floor";
+    if (p.y >  AY - m) return "the ceiling";
+    if (p.z < -AZ + m) return "the far wall";
+    if (p.z >  AZ - m) return "the near wall";
+    return null;
+  }
+
+  // head of `s` vs every other snake's body + its own body (skipping the neck).
+  // Returns the name of what it hit, or null.
+  function bodyHitName(s) {
+    const h2 = CFG.collideDist * CFG.collideDist;
+    for (const o of snakes) {
+      if (o === s || !o.alive) continue;
+      for (let i = 0; i < o.bodyLen; i++) {
+        const m = o.segs[i];
+        if (!m.visible) continue;
+        if (m.position.distanceToSquared(s.head) < h2) return o.name;
+      }
+    }
+    for (let i = CFG.skipSelf; i < s.bodyLen; i++) {
+      const m = s.segs[i];
+      if (!m.visible) continue;
+      if (m.position.distanceToSquared(s.head) < h2) return "your own body";
+    }
+    return null;
+  }
+
+  function hitBodies(s) {
+    return bodyHitName(s) !== null;
+  }
+
+  // Smallest clearance of point `p` to walls or any snake body.
+  // For `owner` we skip the neck segments (they hug the head by design).
+  function clearance(p, owner) {
+    let d = Math.min(p.x + AX, AX - p.x, p.y, AY - p.y, p.z + AZ, AZ - p.z);
+    if (d < 0) return d;
+    for (const s of snakes) {
+      if (!s.alive) continue;
+      const start = s === owner ? CFG.skipSelf + 1 : 0;
+      for (let i = start; i < s.bodyLen; i++) {
+        const m = s.segs[i];
+        if (!m.visible) continue;
+        const dd = m.position.distanceTo(p) - 1.05; // sum of head/seg radii
+        if (dd < d) { d = dd; if (d < 0.05) return d; }
+      }
+    }
+    return d;
+  }
+
+  // ------------------------------------------------------------------
+  // CPU brain
+  // ------------------------------------------------------------------
+  function steerCPU(s) {
+    // 1) aim at the nearest orb — including any wreckage left by the player
+    let tf = null, td2 = Infinity;
+    for (const f of foods) {
+      if (!f.active) continue;
+      const d2 = f.pos.distanceToSquared(s.head);
+      if (d2 < td2) { td2 = d2; tf = f; }
+    }
+    for (const d of debris) {
+      if (!d.active) continue;
+      const d2 = d.pos.distanceToSquared(s.head);
+      if (d2 < td2) { td2 = d2; tf = d; }
+    }
+    const W = s.desired;
+    if (tf) W.copy(tf.pos).sub(s.head).normalize();
+    else W.copy(s.dir);
+
+    // 2) steer away from nearby walls (soft repulsion)
+    const buf = 9;
+    const wl = s.head.x + AX, wr = AX - s.head.x,
+          wb = s.head.y,     wt = AY - s.head.y,
+          wf = s.head.z + AZ, wk = AZ - s.head.z;
+    if (wl < buf) W.x += (1 - wl / buf) * 1.7;
+    if (wr < buf) W.x -= (1 - wr / buf) * 1.7;
+    if (wb < buf) W.y += (1 - wb / buf) * 1.7;
+    if (wt < buf) W.y -= (1 - wt / buf) * 1.7;
+    if (wf < buf) W.z += (1 - wf / buf) * 1.7;
+    if (wk < buf) W.z -= (1 - wk / buf) * 1.7;
+    if (W.lengthSq() < 1e-6) W.copy(s.dir);
+    W.normalize();
+
+    // 3) sample candidate headings: the wall-corrected aim, rotated copies,
+    //    plus the current heading (stability), and score each by clearance.
+    const ref = Math.abs(W.y) < 0.9 ? Y_AXIS : X_AXIS;
+    _a1.crossVectors(W, ref).normalize();
+    _a2.crossVectors(W, _a1).normalize();
+    let n = 0;
+    CANDS[n++].copy(W);
+    const angs = [0.5, 0.9, 1.4, 2.0]; // ~29° .. 115°
+    for (const a of angs) {
+      CANDS[n++].copy(W).applyAxisAngle(_a1, a);
+      CANDS[n++].copy(W).applyAxisAngle(_a2, a * 0.7);
+    }
+    CANDS[n++].copy(s.dir);
+
+    let bestI = 0, bestS = -Infinity;
+    for (let i = 0; i < n; i++) {
+      const c = CANDS[i];
+      let clear = Infinity;
+      for (const L of CFG.cpu.lookAhead) {
+        _look.copy(s.head).addScaledVector(c, L);
+        const d = clearance(_look, s);
+        if (d < clear) { clear = d; if (clear < 0) break; }
+      }
+      let score = clear;
+      if (clear < CFG.cpu.safeClear) score -= (CFG.cpu.safeClear - clear) * 8; // hard safety penalty
+      score += Math.max(0, c.dot(s.dir)) * 0.8;   // prefer stable, small corrections
+      score += c.dot(W) * 0.3;                     // drift back toward the food
+      if (score > bestS) { bestS = score; bestI = i; }
+    }
+    s.desired.copy(CANDS[bestI]);
+  }
+
+  function respawnCPU(s) {
+    let bestMin = -1;
+    let ok = false;
+    for (let t = 0; t < 80; t++) {
+      _rp.set(
+        (Math.random() * 2 - 1) * (AX - 6),
+        6 + Math.random() * (AY - 12),
+        (Math.random() * 2 - 1) * (AZ - 6)
+      );
+      let minD = Infinity;
+      for (const o of snakes) {
+        if (!o.alive) continue;
+        let d = _rp.distanceTo(o.head);
+        if (d < minD) minD = d;
+        for (let i = 0; i < o.bodyLen; i++) {
+          const m = o.segs[i];
+          if (!m.visible) continue;
+          d = _rp.distanceTo(m.position);
+          if (d < minD) minD = d;
+        }
+      }
+      if (minD > 9) {
+        s.reset(_rp, randDir(_hd), true);
+        ok = true;
+        break;
+      }
+      if (minD > bestMin) { bestMin = minD; _rp2.copy(_rp); }
+    }
+    if (!ok) {
+      if (bestMin < 0) _rp2.set(0, AY * 0.5, 0); // never found room: use center
+      s.reset(_rp2, randDir(_hd), true);
+    }
+    s.alive = true;
+  }
+
+  function randDir(out) {
+    const th = Math.random() * Math.PI * 2;
+    const u = Math.random() * 2 - 1;
+    const r = Math.sqrt(1 - u * u);
+    return out.set(r * Math.cos(th), u, r * Math.sin(th));
+  }
+
+  function updateCPU(s, dt) {
+    if (!s.alive) {
+      s.respawnTimer -= dt;
+      if (s.respawnTimer <= 0) respawnCPU(s);
+      return;
+    }
+    s.steerTimer -= dt;
+    if (s.steerTimer <= 0) {
+      steerCPU(s);
+      s.steerTimer = CFG.cpu.steerEvery * (0.75 + Math.random() * 0.5);
+    }
+    // panic: if something is about to be hit between plans, re-plan now
+    _panic.copy(s.head).addScaledVector(s.dir, 1.4);
+    if (clearance(_panic, s) < 0.7) {
+      steerCPU(s);
+      s.steerTimer = 0.12;
+    }
+    s.move(dt, s.desired);
+    if (hitWalls(s.head) || hitBodies(s)) {
+      s.die();
+      s.respawnTimer = CFG.cpu.respawn[0] + Math.random() * (CFG.cpu.respawn[1] - CFG.cpu.respawn[0]);
+      sfxCpuDie();
+    }
+  }
+
+  // ------------------------------------------------------------------
+  // Corner spectator windows
+  // Four fixed cameras sit in the four bottom corners of the arena, each
+  // aimed straight at the arena centre, and are drawn into the matching
+  // screen corner using the scissor test (no extra canvases / GL contexts).
+  // ------------------------------------------------------------------
+  const CORNER_FRAC = 0.10;   // each window ≈ 10% of the viewport width
+  const CORNER_MIN = 72;      // ...but never smaller than this
+  const CORNER_MARGIN = 14;
+
+  const cornerCams = [];
+  for (let i = 0; i < 4; i++) {
+    const cam = new THREE.PerspectiveCamera(90, 1, 0.1, 500);
+    cam.layers.enable(1);   // also render the player's spectator-only head
+    cornerCams.push(cam);
+  }
+
+  function updateCornerCams() {
+    const inset = 0.6;                              // nudge inside the walls
+    const target = new THREE.Vector3(0, AY * 0.45, 0);
+    const eyes = [
+      [-AX + inset, 1.0, -AZ + inset],  // 0 -> screen top-left
+      [ AX - inset, 1.0, -AZ + inset],  // 1 -> screen top-right
+      [-AX + inset, 1.0,  AZ - inset],  // 2 -> screen bottom-left
+      [ AX - inset, 1.0,  AZ - inset],  // 3 -> screen bottom-right
+    ];
+    cornerCams.forEach((cam, i) => {
+      cam.position.set(eyes[i][0], eyes[i][1], eyes[i][2]);
+      cam.lookAt(target);
+    });
+  }
+  updateCornerCams();
+
+  // The first-person camera sits *inside* the player's head, so a head mesh
+  // would fill the screen. Put it on layer 1: hidden from the main camera,
+  // visible only to the corner spectator cams.
+  const playerHead = new THREE.Mesh(
+    new THREE.SphereGeometry(CFG.headRadius * 1.02, 20, 16),
+    new THREE.MeshStandardMaterial({
+      color: COLOR.player.head, emissive: COLOR.player.head,
+      emissiveIntensity: 0.5, roughness: 0.35, metalness: 0.1,
+    })
+  );
+  playerHead.layers.set(1);
+  snakesGroup.add(playerHead);
+
+  // screen-corner frames drawn over the canvas
+  const cornerEls = cornerCams.map((_, i) => {
+    const el = document.createElement("div");
+    el.className = "cornerFrame";
+    const tag = document.createElement("span");
+    tag.className = "ctag";
+    tag.textContent = ["NW", "NE", "SW", "SE"][i];
+    el.appendChild(tag);
+    document.body.appendChild(el);
+    return el;
+  });
+
+  function cornerSize() {
+    return Math.max(CORNER_MIN, Math.round(window.innerWidth * CORNER_FRAC));
+  }
+
+  // CSS rects (top-left origin) + matching scissor y (GL bottom-left origin)
+  function cornerSpots() {
+    const s = cornerSize();
+    const W = window.innerWidth, H = window.innerHeight, m = CORNER_MARGIN;
+    return [
+      { x: m,         y: m         },
+      { x: W - m - s, y: m         },
+      { x: m,         y: H - m - s },
+      { x: W - m - s, y: H - m - s },
+    ].map((p) => ({ x: p.x, y: p.y, s, glY: H - (p.y + s) }));
+  }
+
+  function layoutCornerFrames() {
+    cornerSpots().forEach((p, i) => {
+      const el = cornerEls[i];
+      el.style.left = p.x + "px";
+      el.style.top = p.y + "px";
+      el.style.width = p.s + "px";
+      el.style.height = p.s + "px";
+    });
+  }
+
+  function renderCornerViews() {
+    const spots = cornerSpots();
+    // One live reflection pass per glass wall is already costly; ×4 more for
+    // the corner views is not worth it. Hide the glass here — the grid floor
+    // still shows the arena bounds clearly.
+    const vis = mirrors.map((m) => m.visible);
+    for (const m of mirrors) m.visible = false;
+
+    renderer.setScissorTest(true);
+    for (let i = 0; i < spots.length; i++) {
+      const p = spots[i];
+      renderer.setViewport(p.x, p.glY, p.s, p.s);
+      renderer.setScissor(p.x, p.glY, p.s, p.s);
+      renderer.render(scene, cornerCams[i]);
+    }
+    renderer.setScissorTest(false);
+
+    mirrors.forEach((m, i) => { m.visible = vis[i]; });
+  }
+
+  // ------------------------------------------------------------------
+  // Game state + UI
+  // ------------------------------------------------------------------
+  const state = { mode: "ready", deathT: 0 }; // ready | playing | paused | dead
+  let best = 0;
+  try { best = parseInt(localStorage.getItem("fp_snake_best") || "0", 10) || 0; } catch (e) {}
+
+  const ui = {
+    score: document.getElementById("scoreVal"),
+    len: document.getElementById("lenVal"),
+    spd: document.getElementById("spdVal"),
+    mines: document.getElementById("mineVal"),
+    timer: document.getElementById("timerVal"),
+    timerStat: document.getElementById("timer"),
+    start: document.getElementById("startScreen"),
+    pause: document.getElementById("pauseScreen"),
+    over: document.getElementById("overScreen"),
+    finalScore: document.getElementById("finalScore"),
+    finalLen: document.getElementById("finalLen"),
+    finalCause: document.getElementById("finalCause"),
+    finalRivals: document.getElementById("finalRivals"),
+    newBest: document.getElementById("newBest"),
+    replayModal: document.getElementById("replayModal"),
+    replayFill: document.getElementById("replayFill"),
+    mp: document.getElementById("mpScreen"),
+    mpStatus: document.getElementById("mpStatus"),
+    mpLobby: document.getElementById("mpLobby"),
+    mpCodeBig: document.getElementById("mpCodeBig"),
+    mpLink: document.getElementById("mpLink"),
+    mpAction: document.getElementById("mpAction"),
+    mpPre: document.getElementById("mpPre"),
+    mpDiv: document.getElementById("mpDiv"),
+    mpJoinRow: document.getElementById("mpJoinRow"),
+    countdown: document.getElementById("countdown"),
+    countdownVal: document.getElementById("countdownVal"),
+    respawn: document.getElementById("respawn"),
+    respawnCause: document.getElementById("respawnCause"),
+    respawnVal: document.getElementById("respawnVal"),
+    mpResume: document.getElementById("mpResume"),
+    results: document.getElementById("resultsScreen"),
+    resultsWinner: document.getElementById("resultsWinner"),
+    resultsScores: document.getElementById("resultsScores"),
+    resultsRematch: document.getElementById("resultsRematch"),
+  };
+
+  // Multiplayer session state (see the netcode section further down)
+  const net = {
+    active: false, role: null, code: "",
+    ws: null, pc: null, dc: null,
+    relay: false, connected: false,
+    matchRunning: false, matchEnd: 0, duration: CFG.mp.duration, bots: 0,
+    cfg: null, scores: null,
+    remoteInput: { yaw: Math.PI, pitch: 0, boost: false },
+    inputSeq: 0, lastSnapSent: 0, lastInputSent: 0,
+    snaps: [],
+    hostName: "YOU", guestName: "GUEST",
+  };
+  let countdownT = 0;
+  const pendingIce = [];
+
+  function updateHUD() {
+    ui.score.textContent = player.score;
+    ui.len.textContent = player.bodyLen;
+    ui.spd.textContent = Math.round(player.speed);
+    ui.mines.textContent = player.mines + "/" + CFG.mine.carry;
+    if (net.active && net.matchRunning) {
+      ui.timerStat.style.display = "";
+      const left = Math.max(0, (net.matchEnd - performance.now()) / 1000);
+      const mm = Math.floor(left / 60);
+      const ss = Math.floor(left % 60);
+      ui.timer.textContent = mm + ":" + String(ss).padStart(2, "0");
+    } else {
+      ui.timerStat.style.display = "none";
+    }
+  }
+
+  // rivals leaderboard rows, rebuilt per match
+  function buildRivalRows() {
+    const el = document.getElementById("rivals");
+    el.innerHTML = '<span class="rlabel">Rivals</span>';
+    rivalRows = [];
+    rivals = snakes.filter((s) => s !== player);
+    for (const s of rivals) {
+      const row = document.createElement("div");
+      row.className = "rrow";
+      const hex = "#" + new THREE.Color(s.colors.head).getHexString();
+      const dot = document.createElement("span");
+      dot.className = "dot";
+      dot.style.background = hex;
+      dot.style.boxShadow = `0 0 8px ${hex}`;
+      const name = document.createElement("span");
+      name.className = "rname";
+      name.textContent = s.name;
+      const val = document.createElement("span");
+      val.className = "rlen";
+      val.style.color = hex;
+      val.textContent = String(CFG.startLen);
+      row.appendChild(dot);
+      row.appendChild(name);
+      row.appendChild(val);
+      el.appendChild(row);
+      rivalRows.push({ row, val });
+    }
+  }
+
+  function updateRivalsHUD() {
+    rivals.forEach((s, i) => {
+      const r = rivalRows[i];
+      if (!r) return;
+      r.val.textContent = s.alive ? String(s.bodyLen) : "×";
+      r.row.classList.toggle("dead", !s.alive);
+    });
+  }
+
+  // --- roster setup -----------------------------------------------------
+  function setupSolo() {
+    snakes.length = 0;
+    cpus = [];
+    player = snakePool[0];
+    player.isHuman = true;
+    player.isPlayer = true;
+    player.name = "YOU";
+    snakes.push(player);
+    for (let i = 0; i < CFG.cpuCount; i++) {
+      const s = snakePool[2 + i];
+      s.isHuman = false;
+      s.isPlayer = false;
+      s.name = COLOR.cpus[i % COLOR.cpus.length].name;
+      snakes.push(s);
+      cpus.push(s);
+    }
+    remote = null;
+    playerHead.material.color.set(player.colors.head);
+    playerHead.material.emissive.set(player.colors.head);
+    buildGhosts();
+    buildRivalRows();
+  }
+
+  function setupVersus(cfg) {
+    snakes.length = 0;
+    cpus = [];
+    const localSlot = cfg.role === "host" ? 0 : 1;
+    for (let i = 0; i < 2; i++) {
+      const s = snakePool[i];
+      s.isHuman = true;
+      s.isPlayer = (i === localSlot);
+      s.name = i === 0 ? cfg.hostName : cfg.guestName;
+      snakes.push(s);
+    }
+    for (let i = 0; i < cfg.bots; i++) {
+      const s = snakePool[2 + i];
+      s.isHuman = false;
+      s.isPlayer = false;
+      s.name = COLOR.cpus[i].name;
+      snakes.push(s);
+      cpus.push(s);
+    }
+    player = snakes.find((s) => s.isPlayer);
+    remote = snakes.find((s) => s.isHuman && !s.isPlayer);
+    playerHead.material.color.set(player.colors.head);
+    playerHead.material.emissive.set(player.colors.head);
+    buildGhosts();
+    buildRivalRows();
+  }
+
+  function resetSpawns() {
+    for (const s of snakes) {
+      s._mpAlive = undefined;
+      s._mpInit = false;
+      s._mpPrev = null;
+      s._mpRespawn = 0;
+    }
+    if (remote) {
+      const host = snakes[0], guest = snakes[1];
+      host.reset(new THREE.Vector3(0, AY * 0.5, AZ * 0.6), new THREE.Vector3(0, 0, -1));
+      host.yaw = 0; host.pitch = 0;
+      guest.reset(new THREE.Vector3(0, AY * 0.5, -AZ * 0.6), new THREE.Vector3(0, 0, 1));
+      guest.yaw = Math.PI; guest.pitch = 0;
+    } else {
+      player.reset(new THREE.Vector3(0, AY * 0.5, 0), new THREE.Vector3(0, 0, -1));
+      player.yaw = 0;
+      player.pitch = 0;
+    }
+    for (let i = 0; i < cpus.length; i++) {
+      const h = cpuHomePos(i);
+      _hp.set(h[0], h[1], h[2]);
+      _hd.set(0, 0, 0).sub(_hp);
+      _hd.y += (Math.random() - 0.5) * 1.4;
+      _hd.normalize();
+      cpus[i].reset(_hp, _hd);
+    }
+  }
+
+  function resetGame() {
+    resetSpawns();
+    resetFoods(foodCount);
+    resetPool(debris);
+    resetPowerups();
+    resetMines();
+    for (const w of shockwaves) { w.active = false; w.mesh.visible = false; }
+    replay.open = false;
+    ui.replayModal.classList.add("hidden");
+    ui.over.classList.remove("show");
+    ui.finalCause.textContent = "";
+    camera.position.copy(player.head);
+    camera.rotation.set(player.pitch, player.yaw, 0, "YXZ");
+    camera.fov = 78;
+    camera.updateProjectionMatrix();
+    playerHead.position.copy(player.head);
+    playerHead.visible = true;
+    clearRecording();
+    updateHUD();
+    updateRivalsHUD();
+  }
+
+  // ------------------------------------------------------------------
+  // Multiplayer netcode
+  // Host-authoritative: the host simulates everything and streams snapshots;
+  // the guest sends inputs and renders interpolated snapshots. The coordinator
+  // only handles signalling, unless the direct WebRTC link fails.
+  // ------------------------------------------------------------------
+  const MP_COORD = (() => {
+    const q = new URLSearchParams(location.search).get("coordinator");
+    if (q) return q.replace(/\/$/, "");
+    // Set MP_COORD_PROD after deploying mp/ (see mp/README.md).
+    const MP_COORD_PROD = "";
+    if (location.hostname === "localhost" || location.hostname === "127.0.0.1") return "ws://localhost:8787";
+    return MP_COORD_PROD;
+  })();
+
+  const round2 = (v) => Math.round(v * 100) / 100;
+  const round3 = (v) => Math.round(v * 1000) / 1000;
+
+  function mpStatus(text) { ui.mpStatus.textContent = text || ""; }
+  function mpCoordHttp() { return MP_COORD.replace(/^ws/, "http"); }
+
+  function mpShowLobby(code, role) {
+    ui.mpLobby.classList.remove("hidden");
+    ui.mpCodeBig.textContent = code;
+    ui.mpLink.textContent = location.origin + location.pathname + "?join=" + code;
+    ui.mpPre.classList.add("hidden");
+    ui.mpDiv.classList.add("hidden");
+    ui.mpJoinRow.classList.add("hidden");
+    ui.mpAction.textContent = role === "host" ? "Start match" : "Ready up";
+    ui.mpAction.disabled = true;
+  }
+
+  function mpHideLobby() {
+    ui.mpLobby.classList.add("hidden");
+    ui.mpPre.classList.remove("hidden");
+    ui.mpDiv.classList.remove("hidden");
+    ui.mpJoinRow.classList.remove("hidden");
+    ui.mpAction.disabled = true;
+  }
+
+  async function mpHostGame() {
+    if (!MP_COORD) { mpStatus("Multiplayer coordinator not configured"); return; }
+    const name = (document.getElementById("mpName").value || "YOU").trim().slice(0, 12) || "YOU";
+    const bots = parseInt(document.getElementById("mpBots").value, 10) || 0;
+    net.role = "host";
+    net.hostName = name;
+    net.guestName = "GUEST";
+    net.bots = bots;
+    net.active = true;
+    net.connected = false;
+    net.relay = false;
+    net.matchRunning = false;
+    net.snaps.length = 0;
+    pendingIce.length = 0;
+    mpStatus("Creating challenge…");
+    try {
+      const res = await fetch(mpCoordHttp() + "/create", { method: "POST" });
+      if (!res.ok) throw new Error("create failed");
+      const data = await res.json();
+      net.code = data.code;
+      mpShowLobby(net.code, "host");
+      mpStatus("Waiting for an opponent…");
+      mpConnectWs(net.code, "host");
+    } catch (e) {
+      mpStatus("Could not reach the coordinator");
+      net.active = false;
+      net.role = null;
+    }
+  }
+
+  function mpJoinGame() {
+    if (!MP_COORD) { mpStatus("Multiplayer coordinator not configured"); return; }
+    const code = (document.getElementById("mpCode").value || "").trim().toUpperCase();
+    if (!/^[A-Z2-9]{5}$/.test(code)) { mpStatus("Enter a 5-character code"); return; }
+    const name = (document.getElementById("mpName").value || "YOU").trim().slice(0, 12) || "YOU";
+    net.role = "guest";
+    net.guestName = name;
+    net.active = true;
+    net.connected = false;
+    net.relay = false;
+    net.matchRunning = false;
+    net.code = code;
+    net.snaps.length = 0;
+    pendingIce.length = 0;
+    mpShowLobby(code, "guest");
+    mpStatus("Connecting…");
+    mpConnectWs(code, "guest");
+  }
+
+  function mpConnectWs(code, role) {
+    let ws;
+    try {
+      ws = new WebSocket(MP_COORD + "/ws?code=" + encodeURIComponent(code) + "&role=" + role);
+    } catch (e) {
+      mpStatus("Bad coordinator URL");
+      return;
+    }
+    net.ws = ws;
+    ws.onmessage = (ev) => {
+      let msg; try { msg = JSON.parse(ev.data); } catch (e) { return; }
+      mpHandleSignal(msg);
+    };
+    ws.onclose = () => { if (net.active && !net.connected) mpStatus("Connection closed"); };
+    ws.onerror = () => { mpStatus("Coordinator unreachable"); };
+  }
+
+  function mpHandleSignal(msg) {
+    switch (msg.c) {
+      case "welcome":
+        if (msg.role === "host" && msg.peers >= 2) mpCreateOffer();
+        break;
+      case "peer-joined":
+        mpStatus("Opponent joined — connecting…");
+        if (net.role === "host") mpCreateOffer();
+        break;
+      case "peer-left":
+        mpPeerLeft();
+        break;
+      case "signal":
+        mpHandlePeerSignal(msg.d);
+        break;
+      case "relay":
+        mpHandleGame(msg.d);
+        break;
+    }
+  }
+
+  async function mpCreateOffer() {
+    if (net.pc) return;
+    const pc = new RTCPeerConnection({ iceServers: [{ urls: "stun:stun.l.google.com:19302" }] });
+    net.pc = pc;
+    mpSetupChannel(pc.createDataChannel("game", { ordered: true }));
+    pc.onicecandidate = (e) => { if (e.candidate) mpSendSignal({ type: "ice", candidate: e.candidate }); };
+    pc.onconnectionstatechange = () => { if (pc.connectionState === "failed") mpFallback(); };
+    try {
+      const offer = await pc.createOffer();
+      await pc.setLocalDescription(offer);
+      mpSendSignal({ type: "offer", sdp: pc.localDescription });
+    } catch (e) { mpFallback(); }
+    setTimeout(() => { if (!net.connected) mpFallback(); }, CFG.mp.relayTimeout);
+  }
+
+  async function mpHandlePeerSignal(d) {
+    if (!d) return;
+    if (d.type === "offer") {
+      if (net.role !== "guest" || net.pc) return;
+      const pc = new RTCPeerConnection({ iceServers: [{ urls: "stun:stun.l.google.com:19302" }] });
+      net.pc = pc;
+      pc.ondatachannel = (e) => mpSetupChannel(e.channel);
+      pc.onicecandidate = (e) => { if (e.candidate) mpSendSignal({ type: "ice", candidate: e.candidate }); };
+      pc.onconnectionstatechange = () => { if (pc.connectionState === "failed") mpFallback(); };
+      try {
+        await pc.setRemoteDescription(d.sdp);
+        await flushIce(pc);
+        const answer = await pc.createAnswer();
+        await pc.setLocalDescription(answer);
+        mpSendSignal({ type: "answer", sdp: pc.localDescription });
+      } catch (e) { mpFallback(); }
+      setTimeout(() => { if (!net.connected) mpFallback(); }, CFG.mp.relayTimeout);
+    } else if (d.type === "answer") {
+      if (net.pc) {
+        try {
+          await net.pc.setRemoteDescription(d.sdp);
+          await flushIce(net.pc);
+        } catch (e) {}
+      }
+    } else if (d.type === "ice") {
+      if (!net.pc) return;
+      if (net.pc.remoteDescription) {
+        try { await net.pc.addIceCandidate(d.candidate); } catch (e) {}
+      } else {
+        pendingIce.push(d.candidate);   // apply once the remote description lands
+      }
+    }
+  }
+
+  async function flushIce(pc) {
+    while (pendingIce.length) {
+      const c = pendingIce.shift();
+      try { await pc.addIceCandidate(c); } catch (e) {}
+    }
+  }
+
+  function mpSendSignal(d) {
+    if (net.ws && net.ws.readyState === 1) {
+      net.ws.send(JSON.stringify({ c: "signal", d }));
+    }
+  }
+
+  function mpSetupChannel(dc) {
+    net.dc = dc;
+    dc.onopen = () => {
+      if (net.connected) return;
+      net.connected = true;
+      net.relay = false;
+      mpOnConnected();
+    };
+    dc.onmessage = (ev) => {
+      let msg; try { msg = JSON.parse(ev.data); } catch (e) { return; }
+      mpHandleGame(msg);
+    };
+    dc.onclose = () => { if (net.active && net.matchRunning) mpPeerLeft(); };
+  }
+
+  function mpFallback() {
+    if (net.connected || net.relay) return;
+    net.relay = true;
+    net.connected = true;
+    mpOnConnected();
+  }
+
+  function mpOnConnected() {
+    mpStatus(net.relay ? "Connected (relayed)" : "Connected (direct)");
+    if (net.role === "host") {
+      ui.mpAction.disabled = false;
+      ui.mpAction.textContent = "Start match";
+    } else {
+      mpSendGame({ c: "hello", name: net.guestName });
+    }
+  }
+
+  function mpSendGame(msg) {
+    if (net.dc && net.dc.readyState === "open") {
+      net.dc.send(JSON.stringify(msg));
+    } else if (net.relay && net.ws && net.ws.readyState === 1) {
+      net.ws.send(JSON.stringify({ c: "relay", d: msg }));
+    }
+  }
+
+  function mpHandleGame(msg) {
+    if (!msg) return;
+    switch (msg.c) {
+      case "hello":
+        if (net.role === "host") net.guestName = String(msg.name || "GUEST").slice(0, 12);
+        break;
+      case "config":
+        if (net.role === "guest") {
+          net.cfg = msg.cfg;
+          net.duration = msg.cfg.duration;
+          net.bots = msg.cfg.bots;
+          mpStatus("Opponent ready — click Ready up");
+          ui.mpAction.textContent = "Ready up";
+          ui.mpAction.disabled = false;
+        }
+        break;
+      case "ready":
+        if (net.role === "host" && !net.matchRunning) {
+          mpSendGame({ c: "go", cfg: net.cfg });
+          mpStartMatch(net.cfg, "host");
+        }
+        break;
+      case "go":
+        if (net.role === "guest") {
+          net.cfg = msg.cfg;
+          mpStartMatch(msg.cfg, "guest");
+        }
+        break;
+      case "input":
+        if (net.role === "host") {
+          net.remoteInput.yaw = msg.yaw;
+          net.remoteInput.pitch = msg.pitch;
+          net.remoteInput.boost = !!msg.boost;
+        }
+        break;
+      case "fire":
+        if (net.role === "host" && remote) fireMine(remote);
+        break;
+      case "snap":
+        if (net.role === "guest") mpReceiveSnapshot(msg);
+        break;
+      case "end":
+        if (net.role === "guest") mpEndMatch(msg.scores);
+        break;
+      case "rematch":
+        if (net.role === "guest") mpBackToLobby();
+        break;
+    }
+  }
+
+  function mpReceiveSnapshot(msg) {
+    net.snaps.push({ rt: performance.now(), s: msg.s, f: msg.f, pu: msg.pu, mn: msg.mn });
+    while (net.snaps.length > 30) net.snaps.shift();
+  }
+
+  function mpSendSnapshot(now) {
+    if (!net.matchRunning) return;
+    if (now - net.lastSnapSent < 1000 / CFG.mp.snapshotHz) return;
+    net.lastSnapSent = now;
+
+    const s = [];
+    for (const sn of snakes) {
+      s.push([
+        round2(sn.head.x), round2(sn.head.y), round2(sn.head.z),
+        round3(sn.dir.x), round3(sn.dir.y), round3(sn.dir.z),
+        sn.bodyLen, sn.alive ? 1 : 0, sn.score, sn.mines,
+        round2(Math.max(0, sn.respawnTimer)),
+      ]);
+    }
+    const f = [];
+    for (let i = 0; i < foods.length; i++) {
+      if (foods[i].active) f.push([i, round2(foods[i].pos.x), round2(foods[i].pos.y), round2(foods[i].pos.z)]);
+    }
+    const pu = [];
+    for (let i = 0; i < powerups.length; i++) {
+      if (powerups[i].active) {
+        const p = powerups[i].mesh.position;
+        pu.push([i, round2(p.x), round2(p.y), round2(p.z)]);
+      }
+    }
+    const mn = [];
+    for (let i = 0; i < mines.length; i++) {
+      if (mines[i].active) {
+        mn.push([i, round2(mines[i].pos.x), round2(mines[i].pos.y), round2(mines[i].pos.z), mines[i].armed ? 1 : 0]);
+      }
+    }
+    mpSendGame({ c: "snap", t: Math.round(now), s, f, pu, mn });
+  }
+
+  function mpStartMatch(cfg, role) {
+    cfg = { ...cfg, role };
+    net.cfg = cfg;
+    net.duration = cfg.duration || CFG.mp.duration;
+    net.bots = cfg.bots || 0;
+    const n = 2 + net.bots;
+    const a = arenaFor(n);
+    applyArena(a.ax, a.az);
+    foodCount = foodFor(n);
+    setupVersus(cfg);
+    resetGame();
+    net.snaps.length = 0;
+    ui.mp.classList.add("hidden");
+    ui.start.classList.add("hidden");
+    ui.results.classList.add("hidden");
+    ui.mpResume.classList.add("hidden");
+    ui.respawn.classList.add("hidden");
+    countdownT = 3.2;
+    ui.countdownVal.textContent = "3";
+    ui.countdown.classList.remove("hidden");
+    setMode("countdown");
+  }
+
+  function mpEndMatch(scores) {
+    if (!net.matchRunning) return;
+    net.matchRunning = false;
+    net.scores = scores;
+    ui.mpResume.classList.add("hidden");
+    ui.respawn.classList.add("hidden");
+    document.exitPointerLock && document.exitPointerLock();
+    showResults(scores);
+  }
+
+  function mpEndMatchLocal() {
+    if (!net.matchRunning) return;
+    net.matchRunning = false;
+    const scores = snakes.map((s) => ({ name: s.name, score: s.score, len: s.bodyLen, human: s.isHuman }));
+    net.scores = scores;
+    mpSendGame({ c: "end", scores });
+    document.exitPointerLock && document.exitPointerLock();
+    showResults(scores);
+  }
+
+  function showResults(scores, note) {
+    const humans = scores.filter((s) => s.human).sort((a, b) => b.score - a.score || b.len - a.len);
+    const bots = scores.filter((s) => !s.human);
+    let head = note || "";
+    if (!head) {
+      if (humans.length >= 2) {
+        head = humans[0].score === humans[1].score
+          ? "Draw"
+          : humans[0].score > humans[1].score ? humans[0].name + " wins" : humans[1].name + " wins";
+      } else if (humans.length === 1) {
+        head = humans[0].name + " wins";
+      }
+    }
+    ui.resultsWinner.textContent = head;
+    ui.resultsScores.innerHTML = humans
+      .map((s) => `${s.name} — ${s.score} pts · len ${s.len}`)
+      .join("<br>")
+      + (bots.length ? "<br><br>" + bots.map((s) => `${s.name} — ${s.score} pts`).join("<br>") : "");
+    ui.resultsRematch.style.display = net.role === "host" ? "" : "none";
+    setMode("results");
+  }
+
+  function mpBackToLobby() {
+    net.matchRunning = false;
+    ui.results.classList.add("hidden");
+    ui.countdown.classList.add("hidden");
+    ui.respawn.classList.add("hidden");
+    ui.mp.classList.remove("hidden");
+    mpShowLobby(net.code, net.role);
+    mpStatus(net.connected ? (net.relay ? "Connected (relayed)" : "Connected (direct)") : "Connecting…");
+    ui.mpAction.textContent = net.role === "host" ? "Start match" : "Ready up";
+    ui.mpAction.disabled = net.role !== "host";
+    setMode("mp");
+  }
+
+  function mpPeerLeft() {
+    if (!net.active) return;
+    mpStatus("Opponent disconnected");
+    // tear the peer link down so a rejoin can renegotiate
+    if (net.dc) { try { net.dc.close(); } catch (e) {} net.dc = null; }
+    if (net.pc) { try { net.pc.close(); } catch (e) {} net.pc = null; }
+    net.connected = false;
+    net.relay = false;
+    if (net.matchRunning) {
+      net.matchRunning = false;
+      ui.mpResume.classList.add("hidden");
+      ui.respawn.classList.add("hidden");
+      document.exitPointerLock && document.exitPointerLock();
+      showResults(net.scores || [], "Opponent disconnected");
+    } else {
+      ui.mpAction.disabled = true;
+    }
+  }
+
+  function leaveMp() {
+    net.active = false;
+    net.role = null;
+    net.matchRunning = false;
+    net.connected = false;
+    net.relay = false;
+    net.cfg = null;
+    net.scores = null;
+    net.snaps.length = 0;
+    pendingIce.length = 0;
+    if (net.dc) { try { net.dc.close(); } catch (e) {} net.dc = null; }
+    if (net.pc) { try { net.pc.close(); } catch (e) {} net.pc = null; }
+    if (net.ws) { try { net.ws.close(); } catch (e) {} net.ws = null; }
+    ui.mpResume.classList.add("hidden");
+    ui.respawn.classList.add("hidden");
+    ui.results.classList.add("hidden");
+    ui.countdown.classList.add("hidden");
+    ui.mp.classList.add("hidden");
+  }
+
+  function requestFire() {
+    if (!player.alive || player.mines <= 0 || player.fireCd > 0) return;
+    if (net.active && net.role === "guest") {
+      // optimistic local feedback; the host owns the real mine
+      player.fireCd = CFG.mine.cooldown;
+      player.mines = Math.max(0, player.mines - 1);
+      sfxLaunch();
+      updateHUD();
+      mpSendGame({ c: "fire" });
+    } else {
+      fireMine(player);
+    }
+  }
+
+  // --- guest simulation (snapshot interpolation) -----------------------
+  const _rv2 = new THREE.Vector3();
+
+  function mpGuestFrame(dt, now) {
+    // send our heading/boost to the host
+    if (now - net.lastInputSent >= 1000 / CFG.mp.inputHz) {
+      net.lastInputSent = now;
+      mpSendGame({
+        c: "input",
+        yaw: round3(player.yaw),
+        pitch: round3(player.pitch),
+        boost: !!(boostKey || boostMouse),
+        seq: ++net.inputSeq,
+      });
+    }
+
+    const snaps = net.snaps;
+    if (!snaps.length) return;
+
+    const renderT = now - CFG.mp.interp;
+    let i = 0;
+    while (i + 1 < snaps.length && snaps[i + 1].rt <= renderT) i++;
+    const A = snaps[i];
+    const B = snaps[Math.min(i + 1, snaps.length - 1)];
+    const span = B.rt - A.rt;
+    let f = span > 0 ? (renderT - A.rt) / span : 0;
+    f = Math.max(0, Math.min(1, f));
+
+    for (let k = 0; k < snakes.length; k++) {
+      const sn = snakes[k];
+      const a = A.s[k], b = B.s[k];
+      if (!a) continue;
+
+      const alive = a[7] > 0.5;
+      if (sn._mpAlive === undefined) sn._mpAlive = alive;
+
+      if (sn._mpAlive && !alive) {
+        // died in the host sim: local visual burst + camera
+        explodeBody(sn.segs, sn.bodyLen, debris);
+        spawnWave(shockwaves, sn.head);
+        if (sn.isPlayer) {
+          sfxBlast();
+          deathCam.origin.copy(sn.head);
+          deathCam.t = 0;
+          deathCam.angle = Math.atan2(-sn.dir.z, -sn.dir.x);
+          state.deathT = 0;
+          ui.respawnCause.textContent = "You crashed";
+          ui.respawnVal.textContent = CFG.mp.respawn;
+          ui.respawn.classList.remove("hidden");
+        } else {
+          sfxCpuDie();
+        }
+      }
+      if (!sn._mpAlive && alive && sn.isPlayer) ui.respawn.classList.add("hidden");
+      sn._mpAlive = alive;
+
+      sn.alive = alive;
+      sn.score = a[8];
+      sn.mines = a[9];
+      sn.fireCd = Math.max(0, sn.fireCd - dt);
+
+      if (!alive) {
+        for (let q = 0; q < CFG.maxLen; q++) sn.segs[q].visible = false;
+        sn.path.length = 0;
+        sn._mpInit = false;          // force initPath() on respawn
+        if (sn.isPlayer) sn._mpRespawn = a[10];
+        continue;
+      }
+
+      const hx = a[0] + (b[0] - a[0]) * f;
+      const hy = a[1] + (b[1] - a[1]) * f;
+      const hz = a[2] + (b[2] - a[2]) * f;
+      const len = Math.round(a[6] + (b[6] - a[6]) * f);
+
+      sn.dir.set(b[3], b[4], b[5]);
+      if (sn.dir.lengthSq() < 1e-6) sn.dir.set(0, 0, -1); else sn.dir.normalize();
+
+      if (!sn._mpPrev) sn._mpPrev = new THREE.Vector3();
+      const jump = sn._mpInit ? sn._mpPrev.distanceToSquared(_rv2.set(hx, hy, hz)) : Infinity;
+      const needInit = !sn._mpInit || jump > 9;
+
+      sn.head.set(hx, hy, hz);
+      sn._mpPrev.copy(sn.head);
+      sn._mpInit = true;
+      sn.bodyLen = Math.max(2, len);
+
+      if (needInit) sn.initPath();
+      else sn.recordPath();
+      sn.layoutBody();
+    }
+
+    // props come straight from the host (they don't need interpolation)
+    for (const fo of foods) { fo.active = false; fo.mesh.visible = false; }
+    for (const it of A.f) {
+      const fo = foods[it[0]];
+      if (!fo) continue;
+      fo.active = true;
+      fo.pos.set(it[1], it[2], it[3]);
+      fo.mesh.position.copy(fo.pos);
+      fo.mesh.visible = true;
+    }
+    for (const p of powerups) { p.active = false; p.mesh.visible = false; }
+    for (const it of A.pu) {
+      const p = powerups[it[0]];
+      if (!p) continue;
+      p.active = true;
+      p.pos.set(it[1], it[2], it[3]);
+      p.mesh.position.copy(p.pos);
+      p.mesh.visible = true;
+    }
+    for (const m of mines) { m.active = false; m.mesh.visible = false; }
+    for (const it of A.mn) {
+      const m = mines[it[0]];
+      if (!m) continue;
+      m.active = true;
+      m.pos.set(it[1], it[2], it[3]);
+      m.armed = it[4] > 0.5;
+      m.mesh.position.copy(m.pos);
+      m.mesh.visible = true;
+    }
+
+    // local animation for the synced props
+    const time = now / 1000;
+    for (const p of powerups) {
+      if (!p.active) continue;
+      p.mesh.position.y = p.pos.y + Math.sin(time * 2 + p.phase) * 0.25;
+      p.mesh.rotation.y += dt * 1.4;
+      p.ring.rotation.z += dt * 2.2;
+    }
+    for (const m of mines) {
+      if (!m.active) continue;
+      m.mesh.rotation.y += dt * 1.6;
+      m.mesh.rotation.x += dt * 0.9;
+      const blink = m.armed ? 0.8 + 0.2 * Math.sin(time * 9 + m.phase) : 0.55;
+      m.mesh.scale.setScalar(blink);
+      m.mesh.material.emissiveIntensity = m.armed ? 1.2 : 0.6;
+    }
+
+    updatePool(debris, dt, time);
+    updateWaves(shockwaves, dt);
+
+    if (player.alive) {
+      camera.position.copy(player.head);
+      camera.rotation.set(player.pitch, player.yaw, 0, "YXZ");
+      playerHead.position.copy(player.head);
+      playerHead.visible = true;
+      const targetFov = 78 + ((boostKey || boostMouse) ? (CFG.boostSpeed - CFG.baseSpeed) * 0.9 : 0);
+      camera.fov += (targetFov - camera.fov) * Math.min(1, dt * 4);
+      camera.updateProjectionMatrix();
+    } else {
+      updateDeathCam(dt);
+      playerHead.visible = false;
+      ui.respawnVal.textContent = Math.max(0, Math.ceil(player._mpRespawn || 0));
+    }
+
+    updateHUD();
+    updateRivalsHUD();
+  }
+
+  // --- host: the remote human ------------------------------------------
+  function updateRemoteHuman(dt) {
+    if (!remote) return;
+    if (!remote.alive) {
+      remote.respawnTimer -= dt;
+      if (remote.respawnTimer <= 0) respawnRemote();
+      return;
+    }
+    remote.yaw = net.remoteInput.yaw;
+    remote.pitch = net.remoteInput.pitch;
+    remote.syncDir();
+    const spd = net.remoteInput.boost ? CFG.boostSpeed : remote.speed;
+    remote.move(dt, null, spd);
+    const wall = wallHitName(remote.head);
+    const body = wall ? null : bodyHitName(remote);
+    if (wall || body) remoteDied(remote, wall || body);
+  }
+
+  function remoteDied(s, cause) {
+    if (!s.alive) return;
+    explodeBody(s.segs, s.bodyLen, debris);
+    s.die();
+    s.respawnTimer = CFG.mp.respawn;
+    sfxBlast();
+  }
+
+  function respawnRemote() {
+    respawnCPU(remote);
+    remote.mines = 0;
+  }
+
+  function respawnLocal() {
+    respawnCPU(player);
+    player.mines = 0;
+    player.yaw = Math.atan2(-player.dir.x, -player.dir.z);
+    player.pitch = Math.asin(Math.max(-1, Math.min(1, player.dir.y)));
+    playerHead.position.copy(player.head);
+    playerHead.visible = true;
+    camera.position.copy(player.head);
+    camera.rotation.set(player.pitch, player.yaw, 0, "YXZ");
+    ui.respawn.classList.add("hidden");
+  }
+
+  function setMode(m) {
+    state.mode = m;
+    ui.start.classList.toggle("hidden", m !== "ready");
+    ui.mp.classList.toggle("hidden", m !== "mp");
+    ui.pause.classList.toggle("hidden", m !== "paused");
+    ui.over.classList.toggle("hidden", m !== "dead");
+    ui.results.classList.toggle("hidden", m !== "results");
+    ui.countdown.classList.toggle("hidden", m !== "countdown");
+    if (m !== "dead") ui.over.classList.remove("show");
+    document.getElementById("crosshair").style.display = (m === "playing") ? "block" : "none";
+    document.getElementById("hud").style.display = "flex";
+    const showCams = (m === "playing" || m === "dead" || m === "countdown");
+    if (showCams) layoutCornerFrames();
+    for (const el of cornerEls) el.style.display = (showCams && !replay.open) ? "block" : "none";
+    if (m !== "playing") ui.mpResume.classList.add("hidden");
+  }
+
+  // The player crashed. Their body bursts into orbs and the arena carries on
+  // without them — rivals keep hunting, respawn and eat the wreckage — while a
+  // slow pull-out replays the moment. The score panel fades in over the top.
+  function playerDied(cause) {
+    if (state.mode !== "playing") return;
+    explodeBody(player.segs, player.bodyLen, debris);   // body -> coloured orbs
+    player.die();
+    playerHead.visible = false;
+    sfxBlast();
+    sfxOver();
+
+    // In a multiplayer deathmatch the match keeps running: show a respawn
+    // countdown, keep the pointer locked, and drop back in shortly.
+    if (net.active && net.matchRunning) {
+      player.respawnTimer = CFG.mp.respawn;
+      deathCam.origin.copy(player.head);
+      deathCam.t = 0;
+      deathCam.angle = Math.atan2(-player.dir.z, -player.dir.x);
+      state.deathT = 0;
+      ui.respawnCause.textContent = "You crashed into " + cause;
+      ui.respawnVal.textContent = CFG.mp.respawn;
+      ui.respawn.classList.remove("hidden");
+      return;
+    }
+
+    const isNew = player.score > best;
+    if (isNew) {
+      best = player.score;
+      try { localStorage.setItem("fp_snake_best", String(best)); } catch (e) {}
+    }
+    ui.finalCause.textContent = cause ? "You crashed into " + cause : "";
+    ui.finalScore.textContent = player.score;
+    ui.finalLen.textContent = player.bodyLen;
+    ui.finalRivals.textContent = "Rivals  " + cpus.map((s) => `${s.name} ${s.alive ? s.bodyLen : "×"}`).join("  ·  ");
+    ui.newBest.classList.toggle("hidden", !isNew);
+
+    // the replay button is pointless if we barely got started
+    const watcher = document.getElementById("watchReplay");
+    watcher.style.display = canReplay() ? "" : "none";
+
+    // keep recording for a moment so the replay catches the aftermath
+    rec.dying = true;
+    rec.deathT = rec.t;
+
+    // death cam starts just behind the crash site, then drifts out
+    deathCam.origin.copy(player.head);
+    deathCam.t = 0;
+    deathCam.angle = Math.atan2(-player.dir.z, -player.dir.x);
+    state.deathT = 0;
+    ui.over.classList.remove("show");
+    setMode("dead");
+    document.exitPointerLock && document.exitPointerLock();
+  }
+
+  // ------------------------------------------------------------------
+  // Death replay
+  // A rolling recording of every snake (head, heading, length, alive) plus the
+  // orb positions. A separate scene of *ghost* snakes is re-driven from it, so
+  // the live arena can carry on playing while the replay shows in its modal —
+  // and the blast is reconstructed from the player's body at the moment of death.
+  // ------------------------------------------------------------------
+  const REPLAY_SECONDS = 10;   // window recorded *before* the crash
+  const REPLAY_TAIL = 5.0;     // ...plus this many seconds of aftermath
+  const REPLAY_HOLD = 2.0;     // dwell on the final wide shot before looping
+  const ZOOM_DELAY = 0.4;      // quiet beat after the blast before pulling out
+  const ZOOM_SECONDS = 3.2;    // length of the slow zoom-out
+
+  // chase-cam rig: back/up distances grow with body length (capped)
+  const CHASE = {
+    minBack: 11, backPerLen: 0.6, maxBody: 26,
+    baseUp: 6.5, upPerLen: 0.25,
+    look: 4, lookUp: 1.2,
+  };
+  // final wide framing of the crash site during the zoom-out
+  const WIDE = { r: 54, up: 17 };
+
+  // sample layout: [head(3) dir(3) len(1) alive(1)] per snake, then food xyz,
+  // then pickup xyz, then mines as (xyz + armed)
+  const SNAKE_STRIDE = 8;
+  const FOOD_OFF = MAX_SNAKES * SNAKE_STRIDE;
+  const POWER_OFF = FOOD_OFF + foods.length * 3;
+  const MINE_OFF = POWER_OFF + powerups.length * 3;
+  const SAMPLE_LEN = MINE_OFF + mines.length * 4;
+  const SENTINEL = 1e9;
+
+  const rec = { t: 0, times: [], blobs: [], dying: false, deathT: 0, frozen: false };
+
+  function recordFrame() {
+    if (rec.frozen) return;
+    // Once the player is gone we keep rolling just long enough to capture the
+    // blast and the rivals' reaction, then freeze the tape.
+    if (rec.dying && rec.t - rec.deathT > REPLAY_TAIL) { rec.frozen = true; return; }
+
+    const s = new Float32Array(SAMPLE_LEN);
+    for (let i = 0; i < snakes.length; i++) {
+      const sn = snakes[i], o = i * SNAKE_STRIDE;
+      s[o] = sn.head.x; s[o + 1] = sn.head.y; s[o + 2] = sn.head.z;
+      s[o + 3] = sn.dir.x; s[o + 4] = sn.dir.y; s[o + 5] = sn.dir.z;
+      s[o + 6] = sn.bodyLen;
+      s[o + 7] = sn.alive ? 1 : 0;
+    }
+    for (let i = 0; i < foods.length; i++) {
+      const o = FOOD_OFF + i * 3;
+      if (foods[i].active) {
+        const p = foods[i].pos;
+        s[o] = p.x; s[o + 1] = p.y; s[o + 2] = p.z;
+      } else {
+        s[o] = s[o + 1] = s[o + 2] = SENTINEL;
+      }
+    }
+    for (let i = 0; i < powerups.length; i++) {
+      const o = POWER_OFF + i * 3;
+      if (powerups[i].active) {
+        const p = powerups[i].mesh.position;
+        s[o] = p.x; s[o + 1] = p.y; s[o + 2] = p.z;
+      } else {
+        s[o] = s[o + 1] = s[o + 2] = SENTINEL;
+      }
+    }
+    for (let i = 0; i < mines.length; i++) {
+      const o = MINE_OFF + i * 4;
+      if (mines[i].active) {
+        const p = mines[i].pos;
+        s[o] = p.x; s[o + 1] = p.y; s[o + 2] = p.z;
+        s[o + 3] = mines[i].armed ? 1 : 0;
+      } else {
+        s[o] = s[o + 1] = s[o + 2] = SENTINEL;
+        s[o + 3] = 0;
+      }
+    }
+    rec.times.push(rec.t);
+    rec.blobs.push(s);
+
+    // after death the window grows by the tail instead of sliding
+    const cutoff = rec.dying ? rec.deathT - REPLAY_SECONDS : rec.t - REPLAY_SECONDS;
+    while (rec.times.length > 1 && rec.times[0] < cutoff) {
+      rec.times.shift();
+      rec.blobs.shift();
+    }
+  }
+
+  function clearRecording() {
+    rec.t = 0;
+    rec.times.length = 0;
+    rec.blobs.length = 0;
+    rec.dying = false;
+    rec.deathT = 0;
+    rec.frozen = false;
+  }
+
+  // --- the replay lives in its own scene so the live game keeps running ------
+  const replayScene = new THREE.Scene();
+  replayScene.background = new THREE.Color(COLOR.bg);
+  replayScene.fog = new THREE.Fog(COLOR.bg, 40, 150);
+  replayScene.add(new THREE.HemisphereLight(0xbfe8ff, 0x0a1420, 0.9));
+  {
+    const dl = new THREE.DirectionalLight(0xffffff, 0.7);
+    dl.position.set(20, 60, 10);
+    replayScene.add(dl);
+  }
+
+  const replayArenaObjs = [];
+
+  function buildReplayArena() {
+    for (const o of replayArenaObjs) disposeObject(o, replayScene);
+    replayArenaObjs.length = 0;
+    const add = (o) => { replayScene.add(o); replayArenaObjs.push(o); return o; };
+
+    add(new THREE.GridHelper(Math.max(AX, AZ) * 2, Math.max(AX, AZ) * 2, COLOR.gridMajor, COLOR.grid));
+
+    const fl = new THREE.Mesh(
+      new THREE.PlaneGeometry(AX * 2, AZ * 2),
+      new THREE.MeshBasicMaterial({ color: 0x071019, transparent: true, opacity: 0.55, side: THREE.DoubleSide })
+    );
+    fl.rotation.x = -Math.PI / 2;
+    fl.position.y = -0.02;
+    add(fl);
+
+    const wf = new THREE.LineSegments(
+      new THREE.EdgesGeometry(new THREE.BoxGeometry(AX * 2, AY, AZ * 2)),
+      new THREE.LineBasicMaterial({ color: COLOR.wall, transparent: true, opacity: 0.5 })
+    );
+    wf.position.y = AY / 2;
+    add(wf);
+
+    // Faint glass panels (no live reflections here) so the arena reads as a box
+    const glassMat = new THREE.MeshBasicMaterial({
+      color: 0x123a52, transparent: true, opacity: 0.24,
+      side: THREE.DoubleSide, depthWrite: false,
+    });
+    for (const def of wallDefs) {
+      const m = new THREE.Mesh(new THREE.PlaneGeometry(def.w, def.h), glassMat);
+      orientWall(m, def);
+      add(m);
+    }
+
+    // ...and the same dust field for depth perception
+    const n = 900;
+    const pos = new Float32Array(n * 3);
+    for (let i = 0; i < n; i++) {
+      pos[i * 3 + 0] = (Math.random() - 0.5) * AX * 2;
+      pos[i * 3 + 1] = Math.random() * AY;
+      pos[i * 3 + 2] = (Math.random() - 0.5) * AZ * 2;
+    }
+    const sg = new THREE.BufferGeometry();
+    sg.setAttribute("position", new THREE.BufferAttribute(pos, 3));
+    add(new THREE.Points(sg, new THREE.PointsMaterial({
+      color: 0x9fd8ff, size: 0.12, transparent: true, opacity: 0.5, sizeAttenuation: true,
+    })));
+  }
+  buildReplayArena();
+
+  // Ghost snakes: prototype-shared with Snake so initPath/recordPath/layoutBody
+  // rebuild the bodies exactly as they looked, but with meshes in the replay
+  // scene (and the same per-segment materials, so colours match).
+  let ghosts = [];
+
+  function buildGhosts() {
+    for (const g of ghosts) {
+      for (const m of g.segs) replayScene.remove(m);
+    }
+    ghosts = [];
+    for (const src of snakes) {
+      const g = Object.create(Snake.prototype);
+      g.name = src.name;
+      g.colors = src.colors;
+      g.isHuman = src.isHuman;
+      g.isPlayer = src.isPlayer;
+      g.head = new THREE.Vector3();
+      g.dir = new THREE.Vector3(0, 0, -1);
+      g.desired = new THREE.Vector3();
+      g.yaw = 0; g.pitch = 0;
+      g.bodyLen = CFG.startLen; g.speed = CFG.baseSpeed; g.turnRate = 0;
+      g.score = 0; g.alive = true; g.respawnTimer = 0; g.steerTimer = 0;
+      g.mines = 0; g.fireCd = 0;
+      g.path = []; g.segs = [];
+      g._euler = new THREE.Euler(0, 0, 0, "YXZ");
+      for (let i = 0; i < CFG.maxLen; i++) {
+        const m = new THREE.Mesh(i === 0 ? headGeo : segGeo, src.segs[i].material);
+        m.visible = false;
+        replayScene.add(m);
+        g.segs.push(m);
+      }
+      ghosts.push(g);
+    }
+    // per-snake replay bookkeeping follows the active roster
+    replay.prevAlive = [];
+    replay.hasHead = [];
+    replay.prevHead = [];
+    for (let i = 0; i < snakes.length; i++) {
+      replay.prevAlive.push(false);
+      replay.hasHead.push(false);
+      replay.prevHead.push(new THREE.Vector3());
+    }
+  }
+
+  const ghostFoods = [];
+  {
+    const geo = new THREE.SphereGeometry(0.8, 16, 12);
+    const mat = new THREE.MeshStandardMaterial({ color: COLOR.food, emissive: COLOR.food, emissiveIntensity: 0.9, roughness: 0.3 });
+    for (let i = 0; i < foods.length; i++) {
+      const m = new THREE.Mesh(geo, mat);
+      replayScene.add(m);
+      ghostFoods.push(m);
+    }
+  }
+
+  const ghostDebris = [];
+  {
+    const geo = new THREE.SphereGeometry(0.62, 12, 10);
+    for (let i = 0; i < DEBRIS_MAX; i++) {
+      const m = new THREE.Mesh(geo, debris[0].mesh.material);
+      m.visible = false;
+      replayScene.add(m);
+      ghostDebris.push({
+        mesh: m, pos: new THREE.Vector3(), vel: new THREE.Vector3(),
+        active: false, age: 0, life: 0, phase: Math.random() * Math.PI * 2,
+      });
+    }
+  }
+
+  const ghostPowerups = [];
+  {
+    const geo = new THREE.OctahedronGeometry(0.55, 0);
+    const ringGeo = new THREE.TorusGeometry(0.95, 0.035, 6, 24);
+    const ringMat = new THREE.MeshBasicMaterial({ color: 0xff9fd0, transparent: true, opacity: 0.75 });
+    for (let i = 0; i < powerups.length; i++) {
+      const mesh = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({
+        color: 0xff4d9e, emissive: 0xff4d9e, emissiveIntensity: 0.9,
+        roughness: 0.25, metalness: 0.4,
+      }));
+      const ring = new THREE.Mesh(ringGeo, ringMat);
+      ring.rotation.x = Math.PI / 2;
+      mesh.add(ring);
+      mesh.visible = false;
+      replayScene.add(mesh);
+      ghostPowerups.push({ mesh, ring });
+    }
+  }
+
+  const ghostMines = [];
+  {
+    const geo = new THREE.OctahedronGeometry(0.5, 0);
+    const cageGeo = new THREE.EdgesGeometry(geo);
+    for (let i = 0; i < mines.length; i++) {
+      const mesh = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({
+        color: 0xff9f43, emissive: 0xff9f43, emissiveIntensity: 0.9,
+        roughness: 0.3, metalness: 0.5,
+      }));
+      const cage = new THREE.LineSegments(cageGeo, new THREE.LineBasicMaterial({
+        color: 0xffc078, transparent: true, opacity: 0.9,
+      }));
+      mesh.add(cage);
+      mesh.visible = false;
+      replayScene.add(mesh);
+      ghostMines.push({ mesh, armed: false });
+    }
+  }
+
+  const ghostWaves = makeWavePool(replayScene, 4);
+
+  const replayCam = new THREE.PerspectiveCamera(66, 16 / 9, 0.1, 500);
+
+  const replay = {
+    open: false, elapsed: 0, t0: 0, dur: 0, cursor: 0, inited: false,
+    exploded: false, explodeT: -1, wideAngle: 0,
+    blastPos: new THREE.Vector3(),
+    prevAlive: [], hasHead: [], prevHead: [],
+    camPos: new THREE.Vector3(), camLook: new THREE.Vector3(),
+  };
+
+  const _rv = new THREE.Vector3();
+  const _chaseT = new THREE.Vector3();
+  const _lookT = new THREE.Vector3();
+  const _wideT = new THREE.Vector3();
+  const _wideLook = new THREE.Vector3();
+  const _dcLook = new THREE.Vector3();
+  const arenaCentre = new THREE.Vector3(0, AY * 0.45, 0);
+
+  // Arena + food scale with the number of snakes in the match.
+  function arenaFor(n) {
+    const s = Math.sqrt(n / 4);          // 4 snakes = today's 84x84 arena
+    const ax = Math.max(24, Math.round(CFG.arena.x * s));
+    return { ax, az: ax };
+  }
+  function foodFor(n) {
+    return Math.max(3, Math.min(MAX_FOOD, Math.round(1.25 * n)));
+  }
+
+  function applyArena(ax, az) {
+    if (ax === AX && az === AZ) return;
+    AX = ax;
+    AZ = az;
+    buildArenaGeometry();
+    updateCornerCams();
+    buildReplayArena();
+    arenaCentre.set(0, AY * 0.45, 0);
+  }
+
+  const easeInOutCubic = (x) => (x < 0.5 ? 4 * x * x * x : 1 - Math.pow(-2 * x + 2, 3) / 2);
+  const easeOutCubic = (x) => 1 - Math.pow(1 - x, 3);
+
+  function clampInside(v) {
+    v.x = Math.max(-AX + 1.5, Math.min(AX - 1.5, v.x));
+    v.y = Math.max(1, Math.min(AY - 1.5, v.y));
+    v.z = Math.max(-AZ + 1.5, Math.min(AZ - 1.5, v.z));
+    return v;
+  }
+
+  // slow cinematic pull-back used from the moment the player dies
+  const deathCam = { origin: new THREE.Vector3(), t: 0, angle: 0 };
+  function updateDeathCam(dt) {
+    deathCam.t += dt;
+    const e = easeOutCubic(Math.min(deathCam.t / 10, 1));
+    _dcLook.copy(deathCam.origin).lerp(arenaCentre, e);
+    const radius = 5 + e * 52;
+    const height = 2.5 + e * 24;
+    const a = deathCam.angle + deathCam.t * 0.055;
+    camera.position.set(
+      _dcLook.x + Math.cos(a) * radius,
+      _dcLook.y + height,
+      _dcLook.z + Math.sin(a) * radius
+    );
+    clampInside(camera.position);
+    camera.up.set(0, 1, 0);
+    camera.lookAt(_dcLook);
+  }
+
+  const rmViewEl = document.getElementById("rmView");
+
+  function canReplay() {
+    const n = rec.times.length;
+    const span = n ? rec.times[n - 1] - rec.times[0] : 0;
+    return n >= 5 && span >= 1.2;
+  }
+
+  function beginReplayPlayback() {
+    const n = rec.times.length;
+    replay.t0 = rec.times[0];
+    replay.dur = n ? rec.times[n - 1] - rec.times[0] : 0;
+    replay.elapsed = 0;
+    replay.cursor = 0;
+    replay.inited = false;
+    replay.exploded = false;
+    replay.explodeT = -1;
+    for (let i = 0; i < ghosts.length; i++) {
+      replay.prevAlive[i] = false;
+      replay.hasHead[i] = false;
+      const g = ghosts[i];
+      g.alive = false;
+      for (let k = 0; k < CFG.maxLen; k++) g.segs[k].visible = false;
+    }
+    resetPool(ghostDebris);
+    for (const g of ghostPowerups) g.mesh.visible = false;
+    for (const g of ghostMines) g.mesh.visible = false;
+    for (const w of ghostWaves) { w.active = false; w.mesh.visible = false; }
+    if (ui.replayFill) ui.replayFill.style.width = "0%";
+  }
+
+  function openReplay() {
+    if (state.mode !== "dead" || !canReplay()) return;
+    beginReplayPlayback();
+    replay.open = true;
+    ui.replayModal.classList.remove("hidden");
+    ui.over.classList.add("hidden");
+    for (const el of cornerEls) el.style.display = "none";
+  }
+
+  function closeReplay() {
+    if (!replay.open) return;
+    replay.open = false;
+    ui.replayModal.classList.add("hidden");
+    resetPool(ghostDebris);
+    if (state.mode === "dead") {
+      ui.over.classList.remove("hidden");
+      layoutCornerFrames();
+      for (const el of cornerEls) el.style.display = "block";
+    }
+  }
+
+  function stepReplay(dt) {
+    if (!rec.times.length) return;
+    replay.elapsed += dt;
+    if (replay.elapsed >= replay.dur + REPLAY_HOLD) { beginReplayPlayback(); return; }
+
+    const target = replay.t0 + Math.min(replay.elapsed, replay.dur);
+    const times = rec.times, blobs = rec.blobs;
+    let i = replay.cursor;
+    while (i + 1 < times.length && times[i + 1] < target) i++;
+    replay.cursor = i;
+    const j = Math.min(i + 1, times.length - 1);
+    const ta = times[i], tb = times[j];
+    let f = 0;
+    if (tb > ta) { f = (target - ta) / (tb - ta); f = f < 0 ? 0 : f > 1 ? 1 : f; }
+    const A = blobs[i], B = blobs[j];
+
+    for (let s = 0; s < snakes.length; s++) {
+      const g = ghosts[s], o = s * SNAKE_STRIDE;
+
+      if (!(A[o + 7] > 0.5)) {                 // dead in the recording
+        if (replay.prevAlive[s] && g.alive) {
+          // burst the ghost body into coloured orbs, exactly like the live sim
+          if (s === 0) {
+            explodeBody(g.segs, g.bodyLen, ghostDebris);
+            replay.blastPos.copy(_blastC);
+            replay.exploded = true;
+            replay.explodeT = replay.elapsed;
+            replay.wideAngle = Math.atan2(
+              replay.camPos.z - _blastC.z, replay.camPos.x - _blastC.x
+            );
+          } else {
+            explodeBody(g.segs, g.bodyLen, ghostDebris, CFG.mine.burst);
+          }
+          spawnWave(ghostWaves, _blastC);
+        }
+        if (g.alive) {
+          g.alive = false;
+          for (let k = 0; k < CFG.maxLen; k++) g.segs[k].visible = false;
+        }
+        replay.prevAlive[s] = false;
+        continue;
+      }
+
+      const hx = A[o] + (B[o] - A[o]) * f;
+      const hy = A[o + 1] + (B[o + 1] - A[o + 1]) * f;
+      const hz = A[o + 2] + (B[o + 2] - A[o + 2]) * f;
+      const len = Math.round(A[o + 6] + (B[o + 6] - A[o + 6]) * f);
+
+      _rv.set(B[o + 3], B[o + 4], B[o + 5]);
+      if (_rv.lengthSq() < 1e-6) _rv.set(0, 0, -1); else _rv.normalize();
+
+      // a gap or a revival means the snake respawned — rebuild its tail
+      const jump = replay.hasHead[s]
+        ? replay.prevHead[s].distanceToSquared(_chaseT.set(hx, hy, hz))
+        : Infinity;
+      const needInit = !replay.prevAlive[s] || !replay.hasHead[s] || jump > 9;
+
+      g.alive = true;
+      g.bodyLen = Math.max(2, len);
+      g.dir.copy(_rv);
+      g.head.set(hx, hy, hz);
+      replay.prevHead[s].copy(g.head);
+      replay.hasHead[s] = true;
+      replay.prevAlive[s] = true;
+
+      if (needInit) g.initPath();
+      else g.recordPath();
+      g.layoutBody();
+    }
+
+    for (let k = 0; k < ghostFoods.length; k++) {
+      const o = FOOD_OFF + k * 3;
+      const ax = A[o], ay = A[o + 1], az = A[o + 2];
+      const bx = B[o], by = B[o + 1], bz = B[o + 2];
+      const g = ghostFoods[k];
+      if (ax > 1e8 && bx > 1e8) { g.visible = false; continue; }
+      const x = ax > 1e8 ? bx : (bx > 1e8 ? ax : ax + (bx - ax) * f);
+      const y = ay > 1e8 ? by : (by > 1e8 ? ay : ay + (by - ay) * f);
+      const z = az > 1e8 ? bz : (bz > 1e8 ? az : az + (bz - az) * f);
+      g.position.set(x, y, z);
+      g.visible = true;
+    }
+
+    // pickups (sentinels mark inactive slots; snap instead of lerping past them)
+    for (let k = 0; k < ghostPowerups.length; k++) {
+      const o = POWER_OFF + k * 3;
+      const g = ghostPowerups[k];
+      const ax = A[o], ay = A[o + 1], az = A[o + 2];
+      const bx = B[o], by = B[o + 1], bz = B[o + 2];
+      if (ax > 1e8 && bx > 1e8) { g.mesh.visible = false; continue; }
+      const x = ax > 1e8 ? bx : (bx > 1e8 ? ax : ax + (bx - ax) * f);
+      const y = ay > 1e8 ? by : (by > 1e8 ? ay : ay + (by - ay) * f);
+      const z = az > 1e8 ? bz : (bz > 1e8 ? az : az + (bz - az) * f);
+      g.mesh.position.set(x, y + Math.sin(replay.elapsed * 2 + k) * 0.25, z);
+      g.mesh.rotation.y += dt * 1.4;
+      g.ring.rotation.z += dt * 2.2;
+      g.mesh.visible = true;
+    }
+
+    // mines
+    for (let k = 0; k < ghostMines.length; k++) {
+      const o = MINE_OFF + k * 4;
+      const g = ghostMines[k];
+      const ax = A[o], ay = A[o + 1], az = A[o + 2];
+      const bx = B[o], by = B[o + 1], bz = B[o + 2];
+      if (ax > 1e8 && bx > 1e8) { g.mesh.visible = false; continue; }
+      const x = ax > 1e8 ? bx : (bx > 1e8 ? ax : ax + (bx - ax) * f);
+      const y = ay > 1e8 ? by : (by > 1e8 ? ay : ay + (by - ay) * f);
+      const z = az > 1e8 ? bz : (bz > 1e8 ? az : az + (bz - az) * f);
+      g.armed = (ax > 1e8 ? B[o + 3] : A[o + 3]) > 0.5;
+      g.mesh.position.set(x, y, z);
+      g.mesh.rotation.y += dt * 1.6;
+      g.mesh.rotation.x += dt * 0.9;
+      const blink = g.armed ? 0.8 + 0.2 * Math.sin(replay.elapsed * 9 + k) : 0.55;
+      g.mesh.scale.setScalar(blink);
+      g.mesh.material.emissiveIntensity = g.armed ? 1.2 : 0.6;
+      g.mesh.visible = true;
+    }
+
+    updatePool(ghostDebris, dt, replay.elapsed);
+    updateWaves(ghostWaves, dt);
+    updateReplayCam(dt);
+
+    // keep the lens clear of orbs that are practically touching it
+    cullNearCamera(ghostDebris, replayCam.position, 7.84);
+    for (const m of ghostFoods) {
+      if (m.visible) m.visible = m.position.distanceToSquared(replayCam.position) > 7.84;
+    }
+
+    if (ui.replayFill) {
+      ui.replayFill.style.width = Math.min(100, (replay.elapsed / replay.dur) * 100) + "%";
+    }
+  }
+
+  function updateReplayCam(dt) {
+    const g = ghosts[0];   // the player's ghost
+
+    // chase rig: behind the body, rising with length
+    const bodyDist = Math.min(g.bodyLen * CFG.spacing, CHASE.maxBody);
+    const back = CHASE.minBack + bodyDist * CHASE.backPerLen;
+    const up = CHASE.baseUp + bodyDist * CHASE.upPerLen;
+    _chaseT.copy(g.head).addScaledVector(g.dir, -back);
+    _chaseT.y += up;
+    clampInside(_chaseT);
+
+    _lookT.copy(g.head).addScaledVector(g.dir, CHASE.look);
+    _lookT.y += CHASE.lookUp;
+
+    // after the blast the camera eases back and up into a wide shot
+    let w = 0;
+    if (replay.exploded) {
+      const zt = replay.elapsed - replay.explodeT - ZOOM_DELAY;
+      if (zt > 0) w = easeInOutCubic(Math.min(zt / ZOOM_SECONDS, 1));
+    }
+    if (w > 0.0001) {
+      const a = replay.wideAngle + Math.max(0, replay.elapsed - replay.explodeT) * 0.05;
+      _wideT.set(
+        replay.blastPos.x + Math.cos(a) * WIDE.r,
+        replay.blastPos.y + WIDE.up,
+        replay.blastPos.z + Math.sin(a) * WIDE.r
+      );
+      clampInside(_wideT);
+      _chaseT.lerp(_wideT, w);
+      _wideLook.copy(replay.blastPos).lerp(arenaCentre, w * 0.35);
+      _wideLook.y += 2;
+      _lookT.lerp(_wideLook, w);
+    }
+
+    if (!replay.inited) {
+      replay.camPos.copy(_chaseT);
+      replay.camLook.copy(_lookT);
+      replay.inited = true;
+    } else {
+      const k = 1 - Math.pow(0.0001, dt);   // framerate-independent follow
+      replay.camPos.lerp(_chaseT, k);
+      replay.camLook.lerp(_lookT, k);
+    }
+    replayCam.position.copy(replay.camPos);
+    replayCam.lookAt(replay.camLook);
+  }
+
+  // Scissor the replay scene into the modal's view rectangle — everything
+  // outside it is dimmed by the modal chrome, so it reads as a window.
+  function renderReplayView() {
+    const r = rmViewEl.getBoundingClientRect();
+    if (r.width < 8 || r.height < 8) return;
+    const glY = window.innerHeight - (r.top + r.height);
+    replayCam.aspect = r.width / r.height;
+    replayCam.updateProjectionMatrix();
+    renderer.setScissorTest(true);
+    renderer.setViewport(r.left, glY, r.width, r.height);
+    renderer.setScissor(r.left, glY, r.width, r.height);
+    renderer.render(replayScene, replayCam);
+    renderer.setScissorTest(false);
+  }
+
+  // ------------------------------------------------------------------
+  // Input
+  // ------------------------------------------------------------------
+  // Boost: Shift key and/or right mouse button
+  let boostKey = false, boostMouse = false;
+  window.addEventListener("keydown", (e) => {
+    if (e.key === "Shift") boostKey = true;
+  });
+  window.addEventListener("keyup", (e) => {
+    if (e.key === "Shift") boostKey = false;
+  });
+  window.addEventListener("mousedown", (e) => {
+    if (e.button === 2) boostMouse = true;
+    // left click fires a mine too (only while actually playing + locked)
+    else if (e.button === 0 && state.mode === "playing"
+             && document.pointerLockElement === renderer.domElement) requestFire();
+  });
+  window.addEventListener("mouseup", (e) => {
+    if (e.button === 2) boostMouse = false;
+  });
+  window.addEventListener("blur", () => {
+    boostKey = false;
+    boostMouse = false;
+  });
+  // right-click would otherwise pop the context menu
+  document.addEventListener("contextmenu", (e) => e.preventDefault());
+
+  // F toggles wall reflections (perf escape hatch)
+  let reflectionsOn = mirrors.length > 0;
+  window.addEventListener("keydown", (e) => {
+    if (e.key === "f" || e.key === "F") {
+      reflectionsOn = !reflectionsOn;
+      for (const m of mirrors) m.visible = reflectionsOn;
+    }
+  });
+
+  // Space fires a mine if you're carrying one (and only while playing, so it
+  // still activates focused buttons on the menus)
+  window.addEventListener("keydown", (e) => {
+    if (e.code === "Space" && state.mode === "playing"
+        && document.pointerLockElement === renderer.domElement) {
+      e.preventDefault();
+      if (!e.repeat) requestFire();
+    }
+  });
+
+  document.addEventListener("mousemove", (e) => {
+    if (state.mode !== "playing") return;
+    if (net.active && document.pointerLockElement !== renderer.domElement) return;
+    const mx = e.movementX || 0, my = e.movementY || 0;
+    player.yaw -= mx * CFG.mouseSens;
+    player.pitch -= my * CFG.mouseSens;
+    const lim = CFG.pitchLimit;
+    if (player.pitch > lim) player.pitch = lim;
+    if (player.pitch < -lim) player.pitch = -lim;
+  });
+
+  function requestLock() {
+    const el = renderer.domElement;
+    const p = el.requestPointerLock();
+    if (p && p.catch) p.catch(() => {});
+  }
+
+  function soloStart() {
+    leaveMp();
+    setupSolo();
+    applyArena(CFG.arena.x, CFG.arena.z);
+    foodCount = CFG.foodCount;
+    resetGame();
+    requestLock();
+  }
+
+  document.getElementById("soloBtn").addEventListener("click", () => { audio(); soloStart(); });
+  document.getElementById("mpBtn").addEventListener("click", () => {
+    audio();
+    leaveMp();
+    mpHideLobby();
+    mpStatus("");
+    setMode("mp");
+  });
+  document.getElementById("mpHost").addEventListener("click", () => { audio(); mpHostGame(); });
+  document.getElementById("mpJoin").addEventListener("click", () => { audio(); mpJoinGame(); });
+  document.getElementById("mpBack").addEventListener("click", () => {
+    audio();
+    leaveMp();
+    setupSolo();
+    applyArena(CFG.arena.x, CFG.arena.z);
+    foodCount = CFG.foodCount;
+    resetGame();
+    setMode("ready");
+  });
+
+  ui.mpAction.addEventListener("click", () => {
+    audio();
+    if (net.role === "host") {
+      const cfg = {
+        hostName: net.hostName,
+        guestName: net.guestName,
+        bots: net.bots,
+        duration: CFG.mp.duration,
+      };
+      net.cfg = cfg;
+      requestLock();
+      mpSendGame({ c: "config", cfg });
+      mpStatus("Waiting for opponent to ready up…");
+      ui.mpAction.disabled = true;
+    } else if (net.role === "guest") {
+      requestLock();
+      mpSendGame({ c: "ready" });
+      mpStatus("Waiting for host…");
+      ui.mpAction.disabled = true;
+    }
+  });
+
+  document.getElementById("mpCopy").addEventListener("click", async () => {
+    const link = location.origin + location.pathname + "?join=" + net.code;
+    try {
+      await navigator.clipboard.writeText(link);
+      mpStatus("Link copied");
+    } catch (e) {
+      mpStatus(link);
+    }
+  });
+
+  ui.pause.addEventListener("click", () => { audio(); requestLock(); });
+  ui.mpResume.addEventListener("click", () => { audio(); requestLock(); });
+
+  document.getElementById("retryBtn").addEventListener("click", () => {
+    audio();
+    resetGame();
+    requestLock();
+  });
+  document.getElementById("watchReplay").addEventListener("click", () => {
+    audio();
+    openReplay();
+  });
+  document.getElementById("replayClose").addEventListener("click", closeReplay);
+
+  document.getElementById("resultsRematch").addEventListener("click", () => {
+    audio();
+    if (net.role === "host") {
+      mpSendGame({ c: "rematch" });
+      mpBackToLobby();
+    }
+  });
+  document.getElementById("resultsBack").addEventListener("click", () => {
+    audio();
+    leaveMp();
+    setupSolo();
+    applyArena(CFG.arena.x, CFG.arena.z);
+    foodCount = CFG.foodCount;
+    resetGame();
+    setMode("ready");
+  });
+
+  document.addEventListener("pointerlockchange", () => {
+    const locked = document.pointerLockElement === renderer.domElement;
+    if (locked) {
+      if (!net.active && state.mode === "ready") resetGame();
+      closeReplay();
+      // solo resumes on lock; multiplayer uses the ready/go handshake
+      if (!net.active && (state.mode === "ready" || state.mode === "paused")) setMode("playing");
+      ui.mpResume.classList.add("hidden");
+    } else {
+      if (net.active) {
+        // the match keeps running; just prompt for the pointer back
+        if (state.mode === "playing") ui.mpResume.classList.remove("hidden");
+      } else if (state.mode === "playing") {
+        setMode("paused");
+      }
+    }
+  });
+
+  // Esc closes the replay modal; nothing else steals keys from the arena
+  window.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && replay.open) closeReplay();
+  });
+
+  // ------------------------------------------------------------------
+  // Main loop
+  // ------------------------------------------------------------------
+  let last = performance.now();
+  let foodPulse = 0;
+  let hudTimer = 0;
+
+  function frame(now) {
+    requestAnimationFrame(frame);
+    let dt = (now - last) / 1000;
+    last = now;
+    if (dt > 0.05) dt = 0.05; // clamp big gaps
+
+    if (state.mode === "countdown") {
+      countdownT -= dt;
+      ui.countdownVal.textContent = String(Math.max(1, Math.ceil(countdownT)));
+      camera.position.copy(player.head);
+      camera.rotation.set(player.pitch, player.yaw, 0, "YXZ");
+      playerHead.position.copy(player.head);
+      playerHead.visible = true;
+      if (countdownT <= 0) {
+        ui.countdown.classList.add("hidden");
+        net.matchEnd = performance.now() + net.duration * 1000;
+        net.matchRunning = true;
+        setMode("playing");
+        updateHUD();
+        updateRivalsHUD();
+        if (net.active && document.pointerLockElement !== renderer.domElement) {
+          ui.mpResume.classList.remove("hidden");
+        }
+      }
+    } else if (state.mode === "playing") {
+      if (net.active && net.role === "guest") {
+        mpGuestFrame(dt, now);
+      } else {
+        // --- solo or host: local authoritative sim ---
+        if (player.alive) {
+          player.syncDir();
+          const curSpeed = (boostKey || boostMouse) ? CFG.boostSpeed : player.speed;
+          player.move(dt, null, curSpeed);
+          camera.position.copy(player.head);
+          camera.rotation.set(player.pitch, player.yaw, 0, "YXZ");
+          playerHead.position.copy(player.head);
+          playerHead.visible = true;
+          const targetFov = 78 + (curSpeed - CFG.baseSpeed) * 0.9;
+          camera.fov += (targetFov - camera.fov) * Math.min(1, dt * 4);
+          camera.updateProjectionMatrix();
+        } else if (net.active) {
+          // respawning in a multiplayer match: death cam + countdown
+          updateDeathCam(dt);
+          playerHead.visible = false;
+          player.respawnTimer -= dt;
+          ui.respawnVal.textContent = Math.max(0, Math.ceil(player.respawnTimer));
+          if (player.respawnTimer <= 0) respawnLocal();
+        }
+
+        if (net.active && remote) updateRemoteHuman(dt);
+        for (const s of cpus) updateCPU(s, dt);
+
+        eatAll();
+        collectPowerups();
+        updatePowerups(dt, now / 1000);
+        for (const s of snakes) if (s.fireCd > 0) s.fireCd = Math.max(0, s.fireCd - dt);
+        updateMines(dt, now / 1000);
+        updatePool(debris, dt, now / 1000);
+        updateWaves(shockwaves, dt);
+
+        if (!net.active) {
+          rec.t += dt;
+          recordFrame();
+        }
+
+        if (state.mode === "playing" && player.alive) {
+          const wall = wallHitName(player.head);
+          const body = wall ? null : bodyHitName(player);
+          if (wall || body) playerDied(wall || body);
+        }
+
+        if (net.active && net.matchRunning) {
+          if ((net.matchEnd - now) / 1000 <= 0) mpEndMatchLocal();
+          mpSendSnapshot(now);
+        }
+
+        hudTimer -= dt;
+        if (hudTimer <= 0) {
+          hudTimer = 0.15;
+          updateHUD();
+          updateRivalsHUD();
+        }
+      }
+    } else if (state.mode === "dead") {
+      // The arena plays on without us: rivals keep hunting, respawning and
+      // eating the wreckage until the next game is started. The tape keeps
+      // rolling for a beat so the replay captures the blast and its aftermath.
+      for (const s of cpus) updateCPU(s, dt);
+      eatAll();
+      updatePowerups(dt, now / 1000);
+      updateMines(dt, now / 1000);
+      updatePool(debris, dt, now / 1000);
+      updateWaves(shockwaves, dt);
+      if (!rec.frozen) {
+        rec.t += dt;
+        recordFrame();
+      }
+
+      updateDeathCam(dt);
+
+      state.deathT += dt;
+      if (state.deathT > 1.15) ui.over.classList.add("show");
+
+      hudTimer -= dt;
+      if (hudTimer <= 0) {
+        hudTimer = 0.15;
+        updateHUD();
+        updateRivalsHUD();
+      }
+    }
+
+    // food pulse animation (always)
+    foodPulse += dt;
+    for (const f of foods) {
+      const s = 1 + Math.sin(foodPulse * 4 + f.phase) * 0.08;
+      f.mesh.scale.setScalar(s);
+      f.mesh.rotation.y += dt * 0.8;
+    }
+
+    // keep the lens clear of orbs that are practically touching it
+    cullNearCamera(debris, camera.position, 7.84);
+
+    // --- main viewport (the live arena) ---
+    renderer.setScissorTest(false);
+    renderer.setViewport(0, 0, window.innerWidth, window.innerHeight);
+    renderer.setScissor(0, 0, window.innerWidth, window.innerHeight);
+    renderer.render(scene, camera);
+
+    // --- corner spectator windows ---
+    if ((state.mode === "playing" || state.mode === "dead" || state.mode === "countdown") && !replay.open) {
+      renderCornerViews();
+    }
+
+    // --- replay modal ---
+    if (replay.open) {
+      stepReplay(dt);
+      renderReplayView();
+    }
+  }
+
+  window.addEventListener("resize", () => {
+    camera.aspect = window.innerWidth / window.innerHeight;
+    camera.updateProjectionMatrix();
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    layoutCornerFrames();
+  });
+
+  // init
+  setupSolo();
+  resetGame();
+  setMode("ready");
+
+  // challenge links: ?join=CODE opens multiplayer and joins automatically
+  const joinCode = new URLSearchParams(location.search).get("join");
+  if (joinCode) {
+    setMode("mp");
+    document.getElementById("mpCode").value = joinCode.toUpperCase();
+    setTimeout(() => { if (!net.active) mpJoinGame(); }, 400);
+  }
+
+  requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>
