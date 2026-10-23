@@ -41,6 +41,10 @@ Host-authoritative 1v1 (+ 0–3 bots) timed respawn deathmatch:
 - The arena and food count scale with the number of snakes.
 - The host simulates everything and streams snapshots at 20 Hz; the guest sends
   inputs at 30 Hz and renders interpolated snapshots.
+- Live ping is measured over the active channel and shown in the lobby and at
+  the bottom of the screen during a match.
+- A browser refresh pauses the match: the player rejoins within 30 seconds and
+  play resumes where it left off (the host keeps the authoritative world).
 - A tiny Cloudflare Worker + Durable Object pairs players and relays WebRTC
   signalling. If a direct DataChannel can't be established, the same room
   relays game traffic (the lobby shows "Connected (relayed)").
